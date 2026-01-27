@@ -203,7 +203,47 @@ The priority score is calculated from five factors:
 **Planning**: Add CLI commands using Click or Typer
 **Rationale**: Easy task management from terminal, fits developer workflow
 
+## Integration Layer Design
+
+### Base Integration Interface
+**Decision**: Create abstract base class for all integrations
+**Implementation** (Phase 3):
+- `BaseIntegration` abstract class with `authenticate()` and `poll()` methods
+- `ActionableItem` dataclass for items extracted from integrations
+- Integration-specific implementations (Gmail, Slack, Calendar, Drive)
+
+**Rationale**:
+- Consistent interface across all integrations
+- Easy to add new integrations
+- Testable with mock implementations
+- Supports both polling and webhook patterns
+
+### Integration Manager
+**Decision**: Centralized manager to coordinate all integrations
+**Rationale**:
+- Single point to poll all integrations
+- Automatic conversion of ActionableItems to Tasks
+- Connection testing and health checks
+- Can be extended with scheduling (APScheduler in Phase 4)
+
+### OAuth 2.0 Handling
+**Decision**: Dedicated OAuth managers for Google and Slack
+**Rationale**:
+- Google services (Gmail, Calendar, Drive) share OAuth flow
+- Automatic token refresh
+- Secure credential storage
+- User controls permissions through OAuth consent
+
 ## Changelog
+
+### 2026-01-27 - Phase 3 Complete
+- Created integration framework with base classes and interfaces
+- Implemented OAuth 2.0 utilities for Google and Slack
+- Built Gmail integration with email parsing and actionable item extraction
+- Built Slack integration with channel monitoring
+- Added IntegrationManager to coordinate all integrations
+- Automatic conversion of ActionableItems to Tasks
+- Extended test coverage to 68 tests
 
 ### 2026-01-27 - Phase 2 Complete
 - Added TaskService with enhanced priority scoring algorithm
