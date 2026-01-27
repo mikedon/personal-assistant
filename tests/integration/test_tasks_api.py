@@ -1,0 +1,321 @@
+"""Integration tests for task API endpoints."""
+
+from datetime import datetime, timedelta
+
+import pytest
+
+from src.models.task import Task, TaskPriority, TaskStatus
+
+
+def test_health_check(client):
+    """Test health check endpoint."""
+    response = client.get("/health")
+    assert response.status_code == 200
+    data = response.json()
+    assert data["status"] == "healthy"
+    assert "version" in data
+
+
+def test_create_task(client, sample_task_data):
+    """Test creating a task via API."""
+    response = client.post("/api/tasks", json=sample_task_data)
+    assert response.status_code == 201
+
+    data = response.json()
+    assert data["title"] == sample_task_data["title"]
+    assert data["description"] == sample_task_data["description"]
+    assert data["priority"] == sample_task_data["priority"]
+    assert data["status"] == "pending"
+    assert data["source"] == "manual"
+    assert "id" in data
+    assert "priority_score" in data
+
+
+def test_get_task(client, sample_task_data):
+    """Test retrieving a task by ID."""
+    # Create a task first
+    create_response = client.post("/api/tasks", json=sample_task_data)
+    task_id = create_response.json()["id"]
+
+    # Get the task
+    response = client.get(f"/api/tasks/{task_id}")
+    assert response.status_code == 200
+
+    data = response.json()
+    assert data["id"] == task_id
+    assert data["title"] == sample_task_data["title"]
+
+
+def test_get_task_not_found(client):
+    """Test getting a non-existent task."""
+    response = client.get("/api/tasks/9999")
+    assert response.status_code == 404
+
+
+def test_list_tasks(client, sample_task_data):
+    """Test listing all tasks."""
+    # Create multiple tasks
+    client.post("/api/tasks", json=sample_task_data)
+    client.post("/api/tasks", json={**sample_task_data, "title": "Second Task"})
+
+    response = client.get("/api/tasks")
+    assert response.status_code == 200
+
+    data = response.json()
+    assert data["total"] >= 2
+    assert len(data["tasks"]) >= 2
+
+
+def test_list_tasks_with_status_filter(client, sample_task_data):
+    """Test listing tasks filtered by status."""
+    # Create tasks
+    client.post("/api/tasks", json=sample_task_data)
+
+    # Get pending tasks
+    response = client.get("/api/tasks?status=pending")
+    assert response.status_code == 200
+
+    data = response.json()
+    assert all(task["status"] == "pending" for task in data["tasks"])
+
+
+def test_update_task(client, sample_task_data):
+    """Test updating a task."""
+    # Create a task
+    create_response = client.post("/api/tasks", json=sample_task_data)
+    task_id = create_response.json()["id"]
+
+    # Update the task
+    update_data = {
+        "title": "Updated Task Title",
+        "status": "in_progress",
+    }
+    response = client.put(f"/api/tasks/{task_id}", json=update_data)
+    assert response.status_code == 200
+
+    data = response.json()
+    assert data["title"] == "Updated Task Title"
+    assert data["status"] == "in_progress"
+
+
+def test_update_task_to_completed(client, sample_task_data):
+    """Test marking a task as completed."""
+    # Create a task
+    create_response = client.post("/api/tasks", json=sample_task_data)
+    task_id = create_response.json()["id"]
+
+    # Mark as completed
+    response = client.put(f"/api/tasks/{task_id}", json={"status": "completed"})
+    assert response.status_code == 200
+
+    data = response.json()
+    assert data["status"] == "completed"
+    assert data["completed_at"] is not None
+
+
+def test_delete_task(client, sample_task_data):
+    """Test deleting a task."""
+    # Create a task
+    create_response = client.post("/api/tasks", json=sample_task_data)
+    task_id = create_response.json()["id"]
+
+    # Delete the task
+    response = client.delete(f"/api/tasks/{task_id}")
+    assert response.status_code == 204
+
+    # Verify it's deleted
+    get_response = client.get(f"/api/tasks/{task_id}")
+    assert get_response.status_code == 404
+
+
+def test_get_prioritized_tasks(client, test_db_session):
+    """Test getting tasks by priority score."""
+    # Create tasks with different priorities
+    high_priority_task = Task(
+        title="Critical Task",
+        priority=TaskPriority.CRITICAL,
+        priority_score=90.0,
+        status=TaskStatus.PENDING,
+    )
+    low_priority_task = Task(
+        title="Low Priority Task",
+        priority=TaskPriority.LOW,
+        priority_score=30.0,
+        status=TaskStatus.PENDING,
+    )
+
+    test_db_session.add(high_priority_task)
+    test_db_session.add(low_priority_task)
+    test_db_session.commit()
+
+    response = client.get("/api/tasks/priority")
+    assert response.status_code == 200
+
+    data = response.json()
+    tasks = data["tasks"]
+
+    # Tasks should be sorted by priority score (highest first)
+    assert len(tasks) >= 2
+    assert tasks[0]["title"] == "Critical Task"
+    assert tasks[0]["priority_score"] > tasks[1]["priority_score"]
+
+
+def test_pagination(client, sample_task_data):
+    """Test task list pagination."""
+    # Create multiple tasks
+    for i in range(15):
+        client.post("/api/tasks", json={**sample_task_data, "title": f"Task {i}"})
+
+    # Get first page
+    response = client.get("/api/tasks?limit=10&offset=0")
+    assert response.status_code == 200
+    data = response.json()
+    assert len(data["tasks"]) == 10
+    assert data["total"] >= 15
+
+    # Get second page
+    response = client.get("/api/tasks?limit=10&offset=10")
+    assert response.status_code == 200
+    data = response.json()
+    assert len(data["tasks"]) >= 5
+
+
+# Phase 2 Tests
+def test_search_tasks(client, sample_task_data):
+    """Test searching tasks by title/description."""
+    client.post("/api/tasks", json={**sample_task_data, "title": "Meeting with team"})
+    client.post("/api/tasks", json={**sample_task_data, "title": "Other task", "description": "About the meeting"})
+    client.post("/api/tasks", json={**sample_task_data, "title": "Unrelated"})
+
+    response = client.get("/api/tasks?search=meeting")
+    assert response.status_code == 200
+    data = response.json()
+    assert data["total"] == 2
+
+
+def test_filter_by_priority(client, sample_task_data):
+    """Test filtering tasks by priority."""
+    client.post("/api/tasks", json={**sample_task_data, "priority": "critical"})
+    client.post("/api/tasks", json={**sample_task_data, "priority": "low"})
+
+    response = client.get("/api/tasks?priority=critical")
+    assert response.status_code == 200
+    data = response.json()
+    assert data["total"] == 1
+    assert data["tasks"][0]["priority"] == "critical"
+
+
+def test_filter_exclude_completed(client, sample_task_data):
+    """Test excluding completed tasks."""
+    client.post("/api/tasks", json=sample_task_data)
+    resp = client.post("/api/tasks", json={**sample_task_data, "title": "Complete me"})
+    task_id = resp.json()["id"]
+    client.put(f"/api/tasks/{task_id}", json={"status": "completed"})
+
+    # With completed
+    response = client.get("/api/tasks?include_completed=true")
+    assert response.json()["total"] == 2
+
+    # Without completed
+    response = client.get("/api/tasks?include_completed=false")
+    assert response.json()["total"] == 1
+
+
+def test_get_overdue_tasks(client, sample_task_data):
+    """Test getting overdue tasks endpoint."""
+    from datetime import UTC, datetime, timedelta
+
+    yesterday = (datetime.now(UTC) - timedelta(days=1)).isoformat()
+    tomorrow = (datetime.now(UTC) + timedelta(days=1)).isoformat()
+
+    client.post("/api/tasks", json={**sample_task_data, "title": "Overdue", "due_date": yesterday})
+    client.post("/api/tasks", json={**sample_task_data, "title": "Future", "due_date": tomorrow})
+
+    response = client.get("/api/tasks/overdue")
+    assert response.status_code == 200
+    data = response.json()
+    assert data["total"] == 1
+    assert data["tasks"][0]["title"] == "Overdue"
+
+
+def test_get_due_soon_tasks(client, sample_task_data):
+    """Test getting tasks due soon endpoint."""
+    from datetime import UTC, datetime, timedelta
+
+    tomorrow = (datetime.now(UTC) + timedelta(days=1)).isoformat()
+    next_month = (datetime.now(UTC) + timedelta(days=30)).isoformat()
+
+    client.post("/api/tasks", json={**sample_task_data, "title": "Soon", "due_date": tomorrow})
+    client.post("/api/tasks", json={**sample_task_data, "title": "Later", "due_date": next_month})
+
+    response = client.get("/api/tasks/due-soon?days=7")
+    assert response.status_code == 200
+    data = response.json()
+    assert data["total"] == 1
+    assert data["tasks"][0]["title"] == "Soon"
+
+
+def test_get_task_statistics(client, sample_task_data):
+    """Test getting task statistics."""
+    client.post("/api/tasks", json={**sample_task_data, "priority": "high"})
+    client.post("/api/tasks", json={**sample_task_data, "priority": "low"})
+    resp = client.post("/api/tasks", json=sample_task_data)
+    task_id = resp.json()["id"]
+    client.put(f"/api/tasks/{task_id}", json={"status": "completed"})
+
+    response = client.get("/api/tasks/stats")
+    assert response.status_code == 200
+    data = response.json()
+
+    assert data["total"] == 3
+    assert data["active"] == 2
+    assert data["by_status"]["completed"] == 1
+    assert data["by_status"]["pending"] == 2
+
+
+def test_bulk_update_status(client, sample_task_data):
+    """Test bulk status update."""
+    resp1 = client.post("/api/tasks", json={**sample_task_data, "title": "Task 1"})
+    resp2 = client.post("/api/tasks", json={**sample_task_data, "title": "Task 2"})
+    client.post("/api/tasks", json={**sample_task_data, "title": "Task 3"})
+
+    task_ids = [resp1.json()["id"], resp2.json()["id"]]
+
+    response = client.post("/api/tasks/bulk/status", json={
+        "task_ids": task_ids,
+        "status": "completed"
+    })
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["total"] == 2
+    assert all(t["status"] == "completed" for t in data["tasks"])
+
+
+def test_bulk_delete(client, sample_task_data):
+    """Test bulk delete."""
+    resp1 = client.post("/api/tasks", json={**sample_task_data, "title": "Delete 1"})
+    resp2 = client.post("/api/tasks", json={**sample_task_data, "title": "Delete 2"})
+    resp3 = client.post("/api/tasks", json={**sample_task_data, "title": "Keep"})
+
+    task_ids = [resp1.json()["id"], resp2.json()["id"]]
+
+    response = client.post("/api/tasks/bulk/delete", json={"task_ids": task_ids})
+
+    assert response.status_code == 200
+    assert response.json()["deleted_count"] == 2
+
+    # Verify deletion
+    assert client.get(f"/api/tasks/{resp1.json()['id']}").status_code == 404
+    assert client.get(f"/api/tasks/{resp3.json()['id']}").status_code == 200
+
+
+def test_recalculate_priorities(client, sample_task_data):
+    """Test recalculating priorities."""
+    client.post("/api/tasks", json=sample_task_data)
+    client.post("/api/tasks", json=sample_task_data)
+
+    response = client.post("/api/tasks/recalculate-priorities")
+
+    assert response.status_code == 200
+    assert response.json()["updated_count"] == 2

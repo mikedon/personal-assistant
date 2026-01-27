@@ -1,0 +1,117 @@
+"""Pydantic schemas for API request/response models."""
+
+from datetime import datetime
+
+from pydantic import BaseModel, ConfigDict, Field
+
+from src.models.task import TaskPriority, TaskSource, TaskStatus
+
+
+# Task Schemas
+class TaskBase(BaseModel):
+    """Base schema for task data."""
+
+    title: str = Field(..., min_length=1, max_length=500)
+    description: str | None = None
+    priority: TaskPriority = TaskPriority.MEDIUM
+    due_date: datetime | None = None
+    tags: list[str] = Field(default_factory=list)
+
+
+class TaskCreate(TaskBase):
+    """Schema for creating a new task."""
+
+    source: TaskSource = TaskSource.MANUAL
+    source_reference: str | None = None
+
+
+class TaskUpdate(BaseModel):
+    """Schema for updating a task."""
+
+    title: str | None = Field(default=None, min_length=1, max_length=500)
+    description: str | None = None
+    status: TaskStatus | None = None
+    priority: TaskPriority | None = None
+    due_date: datetime | None = None
+    tags: list[str] | None = None
+
+
+class TaskResponse(TaskBase):
+    """Schema for task response."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    status: TaskStatus
+    source: TaskSource
+    source_reference: str | None
+    priority_score: float
+    created_at: datetime
+    updated_at: datetime
+    completed_at: datetime | None
+
+
+class TaskListResponse(BaseModel):
+    """Schema for list of tasks response."""
+
+    tasks: list[TaskResponse]
+    total: int
+
+
+# Batch Operations Schemas
+class BulkStatusUpdate(BaseModel):
+    """Schema for bulk status update."""
+
+    task_ids: list[int] = Field(..., min_length=1)
+    status: TaskStatus
+
+
+class BulkDeleteRequest(BaseModel):
+    """Schema for bulk delete request."""
+
+    task_ids: list[int] = Field(..., min_length=1)
+
+
+class BulkDeleteResponse(BaseModel):
+    """Schema for bulk delete response."""
+
+    deleted_count: int
+
+
+class RecalculatePrioritiesResponse(BaseModel):
+    """Schema for recalculate priorities response."""
+
+    updated_count: int
+
+
+# Statistics Schemas
+class TaskStatistics(BaseModel):
+    """Schema for task statistics."""
+
+    total: int
+    active: int
+    by_status: dict[str, int]
+    by_priority: dict[str, int]
+    by_source: dict[str, int]
+    overdue: int
+    due_today: int
+    due_this_week: int
+    avg_completion_hours: float | None
+
+
+# Health/Status Schemas
+class HealthResponse(BaseModel):
+    """Health check response."""
+
+    status: str
+    version: str
+    database: str
+
+
+class AgentStatusResponse(BaseModel):
+    """Agent status response."""
+
+    status: str
+    last_poll: datetime | None
+    tasks_pending: int
+    notifications_unread: int

@@ -1,0 +1,42 @@
+# Personal Assistant Configuration
+# Copy this file to config.yaml and fill in your settings
+
+llm:
+  # OpenAI-compatible API base URL (supports LiteLLM routing)
+  base_url: "https://api.openai.com/v1"
+  api_key: "your-api-key-here"
+  model: "gpt-4"
+  temperature: 0.7
+  max_tokens: 2000
+
+database:
+  # SQLite database path
+  url: "sqlite:///personal_assistant.db"
+  echo: false
+
+google:
+  # OAuth credentials from Google Cloud Console
+  credentials_path: "credentials.json"
+  token_path: "token.json"
+  scopes:
+    - "https://www.googleapis.com/auth/gmail.readonly"
+    - "https://www.googleapis.com/auth/calendar"
+    - "https://www.googleapis.com/auth/drive.readonly"
+
+slack:
+  # Slack app tokens
+  bot_token: "xoxb-your-bot-token"
+  app_token: "xapp-your-app-token"
+  channels:
+    - "general"
+    - "important-updates"
+
+agent:
+  # How often to check integrations (in minutes)
+  poll_interval_minutes: 15
+  # 'suggest' = recommend only, 'auto' = act automatically
+  autonomy_level: "suggest"
+  # Where to write the daily summary document
+  output_document_path: "~/personal_assistant_summary.md"
+  # How often to remind you to check the document (in hours)
+  reminder_interval_hours: 2
