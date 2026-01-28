@@ -59,10 +59,67 @@ cp config.example.yaml config.yaml
 
 ## Usage
 
+### Command-Line Interface (CLI)
+
+The Personal Assistant provides a full-featured CLI for managing tasks and controlling the agent.
+
+#### Quick Start
+```bash
+# Initialize configuration
+pa config init
+
+# Add a task
+pa tasks add "Review PR #123" -p high -D tomorrow
+
+# List tasks
+pa tasks list
+
+# View daily summary
+pa summary
+
+# Start the agent (foreground)
+pa agent start --foreground
+```
+
+#### Agent Commands
+```bash
+pa agent start [--autonomy LEVEL] [--foreground]  # Start the agent
+pa agent stop                                       # Stop the agent
+pa agent status                                     # Show agent status
+pa agent poll                                       # Trigger immediate poll
+```
+
+Autonomy levels: `suggest`, `auto_low`, `auto`, `full`
+
+#### Task Commands
+```bash
+pa tasks list [--status STATUS] [--priority PRIORITY] [--all] [--limit N]
+pa tasks add TITLE [-d DESCRIPTION] [-p PRIORITY] [-D DUE] [-t TAG]...
+pa tasks complete TASK_ID
+pa tasks delete TASK_ID [--yes]
+pa tasks show TASK_ID
+pa tasks priority [--limit N]   # Show top priority tasks
+pa tasks stats                  # Show task statistics
+```
+
+**Due date formats**: `YYYY-MM-DD`, `today`, `tomorrow`, `+3d` (3 days), `+2w` (2 weeks)
+
+#### Other Commands
+```bash
+pa summary                       # Daily summary with recommendations
+pa config show                   # Show current configuration
+pa config path                   # Show config file path
+pa config init [--force]         # Create default config file
+pa server [--host HOST] [--port PORT] [--reload]  # Start API server
+pa notify MESSAGE [--title TITLE]  # Send test notification
+```
+
 ### Running the API Server
 
 Start the FastAPI server:
 ```bash
+pa server --reload
+# or
 uvicorn src.api.main:app --reload
 ```
 
@@ -148,7 +205,7 @@ ruff format src/ tests/
 
 ## Project Status
 
-**Current Phase**: Phase 3 - Integration Layer ✅
+**Current Phase**: Phase 5 - User Interface & Notifications ✅
 
 - [x] Project structure and dependencies
 - [x] Configuration system
@@ -162,11 +219,14 @@ ruff format src/ tests/
 - [x] Gmail integration (extracts actionable items from emails)
 - [x] Slack integration (monitors channels for actionable messages)
 - [x] Integration manager to coordinate polling
-- [x] Comprehensive test coverage (68 tests)
+- [x] Autonomous agent with LLM integration
+- [x] Four configurable autonomy levels
+- [x] Productivity recommendations with caching
+- [x] **CLI with Click and rich formatting**
+- [x] **macOS native notifications (osascript)**
+- [x] **Comprehensive test coverage (194 tests)**
 
 **Next Steps**:
-- Phase 4: Autonomous agent with LLM integration (scheduled polling, automatic task creation)
-- Phase 5: User interface and notifications (CLI, markdown output, macOS notifications)
 - Phase 6: Meeting scheduler and calendar optimization
 
 ## Architecture

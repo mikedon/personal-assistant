@@ -47,6 +47,18 @@ class SlackConfig(BaseModel):
     channels: list[str] = Field(default=[], description="Channels to monitor")
 
 
+class NotificationConfig(BaseModel):
+    """Notification configuration."""
+
+    enabled: bool = Field(default=True, description="Enable notifications")
+    sound: bool = Field(default=True, description="Play sound with notifications")
+    # Notification triggers
+    on_overdue: bool = Field(default=True, description="Notify when tasks become overdue")
+    on_due_soon: bool = Field(default=True, description="Notify when tasks are due soon")
+    on_task_created: bool = Field(default=False, description="Notify when agent creates tasks")
+    due_soon_hours: int = Field(default=4, description="Hours before due date to notify")
+
+
 class AgentConfig(BaseModel):
     """Agent behavior configuration."""
 
@@ -72,6 +84,7 @@ class Config(BaseSettings):
     google: GoogleConfig = Field(default_factory=GoogleConfig)
     slack: SlackConfig = Field(default_factory=SlackConfig)
     agent: AgentConfig = Field(default_factory=AgentConfig)
+    notifications: NotificationConfig = Field(default_factory=NotificationConfig)
 
 
 def load_config(config_path: str | Path | None = None) -> Config:

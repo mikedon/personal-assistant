@@ -188,8 +188,40 @@ The priority score is calculated from five factors:
 ## Future Considerations
 
 ### CLI Interface
-**Planning**: Add CLI commands using Click or Typer
-**Rationale**: Easy task management from terminal, fits developer workflow
+**Decision**: Use Click with rich for CLI implementation
+**Implementation** (Phase 5):
+- Full command hierarchy: agent, tasks, config, summary, server, notify
+- Rich library for styled output (tables, panels, colored text)
+- Agent commands control the autonomous agent lifecycle
+- Task commands provide full CRUD operations with filtering
+- Smart due date parsing: "today", "tomorrow", "+3d", "+2w", ISO format
+- Priority emoji indicators for visual scanning
+
+**Rationale**:
+- Click provides robust argument parsing and help generation
+- Rich enables beautiful terminal output without complexity
+- Subcommand groups organize related functionality
+- Consistent with developer workflow expectations
+
+### Notification Service
+**Decision**: Platform-native notifications with fallback
+**Implementation** (Phase 5):
+- macOS: osascript for native Notification Center integration
+- Non-macOS: Terminal-based fallback using rich panels
+- Configurable notification types and triggers
+- Sound support on macOS
+
+**Configuration Options**:
+- `enabled`: Master toggle for notifications
+- `sound`: Enable/disable notification sound
+- `on_overdue`: Notify when tasks become overdue
+- `on_due_soon`: Notify when tasks are due within N hours
+- `on_task_created`: Notify when agent creates new tasks
+
+**Rationale**:
+- Native notifications are less intrusive than terminal popups
+- Configuration allows users to control notification volume
+- Fallback ensures functionality across platforms
 
 ## Autonomous Agent Architecture
 
@@ -340,6 +372,18 @@ The priority score is calculated from five factors:
 - User controls permissions through OAuth consent
 
 ## Changelog
+
+### 2026-01-28 - Phase 5 Complete
+- Created full-featured CLI using Click with rich formatting
+- Implemented agent control commands (start, stop, status, poll)
+- Implemented task management commands (list, add, complete, delete, show, priority, stats)
+- Added configuration commands (show, path, init)
+- Added summary command for daily productivity overview
+- Created notification service with macOS osascript integration
+- Added terminal fallback for non-macOS platforms
+- Notification types: info, warning, success, error with sound support
+- Task-specific notifications: due soon, overdue, task created
+- Extended test coverage to 194 tests (36 new CLI tests)
 
 ### 2026-01-28 - Phase 4 Complete
 - Implemented `AutonomousAgent` core with APScheduler integration

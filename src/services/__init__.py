@@ -9,6 +9,11 @@ from src.services.llm_service import (
     PrioritySuggestion,
     ProductivityRecommendation,
 )
+from src.services.notification_service import (
+    Notification,
+    NotificationService,
+    NotificationType,
+)
 from src.services.recommendation_service import RecommendationService
 from src.services.task_service import TaskService
 
@@ -18,6 +23,9 @@ __all__ = [
     "LLMError",
     "LLMResponse",
     "LLMService",
+    "Notification",
+    "NotificationService",
+    "NotificationType",
     "PrioritySuggestion",
     "ProductivityRecommendation",
     "RecommendationService",
