@@ -187,21 +187,126 @@ The priority score is calculated from five factors:
 
 ## Future Considerations
 
-### Agent Scheduling
-**Planning**: Use APScheduler for periodic polling
-**Rationale**: Lightweight, no external dependencies, supports cron-like schedules
-
-### Document Output
-**Planning**: Generate markdown files for daily summaries
-**Rationale**: Human-readable, version-controllable, works with Obsidian
-
-### Observability
-**Planning**: Store agent logs in database
-**Rationale**: Track agent decisions, debug issues, analyze patterns
-
 ### CLI Interface
 **Planning**: Add CLI commands using Click or Typer
 **Rationale**: Easy task management from terminal, fits developer workflow
+
+## Autonomous Agent Architecture
+
+### Agent Core Design
+**Decision**: Implement `AutonomousAgent` class as central coordinator
+**Implementation** (Phase 4):
+- Agent runs on configurable schedule using APScheduler
+- Polls all enabled integrations for actionable items
+- Uses LLM to extract tasks from text content
+- Creates tasks automatically based on autonomy level
+- Generates productivity recommendations
+- Writes markdown summary documents
+
+**Architecture**:
+```
+┌──────────────────────────────────────────────────────────────┐
+│                    AutonomousAgent                            │
+│  ┌──────────────┐  ┌──────────────┐  ┌──────────────────┐   │
+│  │  Scheduler   │  │ Integration  │  │   LLM Service    │   │
+│  │ (APScheduler)│  │   Manager    │  │   (litellm)      │   │
+│  └──────────────┘  └──────────────┘  └──────────────────┘   │
+│          │                 │                   │             │
+│          ▼                 ▼                   ▼             │
+│  ┌─────────────────────────────────────────────────────────┐│
+│  │                    Poll Cycle                            ││
+│  │  1. Poll integrations for ActionableItems                ││
+│  │  2. Extract tasks using LLM                              ││
+│  │  3. Create/suggest tasks based on autonomy level         ││
+│  │  4. Log activity to database                             ││
+│  └─────────────────────────────────────────────────────────┘│
+└──────────────────────────────────────────────────────────────┘
+```
+
+**Rationale**:
+- Single point of coordination for agent behavior
+- Scheduled operations don't block API
+- Clear separation between polling, processing, and action
+- State tracking for session statistics
+
+### Autonomy Levels
+**Decision**: Implement four configurable autonomy levels
+**Levels**:
+1. **SUGGEST** (default): Only suggest tasks, never auto-create
+2. **AUTO_LOW**: Auto-create tasks with confidence ≥ 0.8
+3. **AUTO**: Auto-create all tasks extracted by LLM
+4. **FULL**: Auto-create tasks and apply LLM priority suggestions
+
+**Rationale**:
+- Users control how much automation they want
+- Conservative default (suggest only)
+- Gradual trust-building with the agent
+- Enterprise users may want more control
+
+### LLM Service Design
+**Decision**: Dedicated `LLMService` class using litellm
+**Capabilities**:
+- Task extraction from text (emails, Slack messages)
+- Priority suggestions for existing tasks
+- Productivity recommendations based on task state
+- Calendar optimization suggestions
+
+**Design Principles**:
+- Lower temperature (0.3) for extraction tasks
+- JSON output format with schema guidance
+- Markdown code block parsing for responses
+- Graceful degradation on errors
+- Token usage tracking for cost monitoring
+
+**Rationale**:
+- litellm provides provider-agnostic interface
+- Can switch between OpenAI, Anthropic, local models
+- Structured output reduces parsing errors
+- Cost visibility for budget management
+
+### Agent Logging
+**Decision**: Comprehensive logging to database
+**Implementation**:
+- `AgentLogService` for all agent activities
+- Tracks: polls, task creations, LLM requests, errors
+- Token usage and model information stored
+- Activity summaries for monitoring
+- Automatic cleanup of old logs
+
+**Rationale**:
+- Debug agent behavior over time
+- Track LLM costs and usage patterns
+- Identify integration issues
+- Build user trust through transparency
+
+### Recommendation Service
+**Decision**: High-level service for productivity recommendations
+**Features**:
+- Daily summary with statistics
+- Quick wins identification (heuristic-based)
+- Overdue action plans
+- Focus and scheduling recommendations
+- Caching to reduce LLM calls
+
+**Rationale**:
+- Abstracts LLM complexity from API layer
+- Caching reduces costs and latency
+- Multiple recommendation types for different needs
+- Non-LLM features work without API key
+
+### Document Output
+**Decision**: Generate markdown summary documents
+**Implementation**:
+- Path configurable via `output_document_path`
+- Generated during recommendation cycles
+- Contains: stats, top tasks, recommendations, agent status
+- Emoji indicators for priority levels
+
+**Rationale**:
+- Human-readable daily digest
+- Works with note-taking apps (Obsidian, etc.)
+- No UI needed for basic functionality
+- Version-controllable if desired
 
 ## Integration Layer Design
 
@@ -235,6 +340,17 @@ The priority score is calculated from five factors:
 - User controls permissions through OAuth consent
 
 ## Changelog
+
+### 2026-01-28 - Phase 4 Complete
+- Implemented `AutonomousAgent` core with APScheduler integration
+- Created `LLMService` with litellm for task extraction and recommendations
+- Added four configurable autonomy levels (suggest, auto_low, auto, full)
+- Built `AgentLogService` for activity tracking and LLM usage monitoring
+- Created `RecommendationService` with caching and multiple recommendation types
+- Added agent API endpoints: status, start/stop, poll, recommendations, logs
+- Implemented markdown summary document generation
+- Extended test coverage with unit tests for LLM and agent services
+- Added integration tests for agent API endpoints
 
 ### 2026-01-27 - Phase 3 Complete
 - Created integration framework with base classes and interfaces
