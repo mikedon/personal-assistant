@@ -91,6 +91,12 @@ pa agent poll                                       # Trigger immediate poll
 
 Autonomy levels: `suggest`, `auto_low`, `auto`, `full`
 
+**Agent Process Management:**
+- The agent uses a PID file (`~/.personal-assistant/agent.pid`) to track running instances
+- `pa agent status` accurately shows if the agent is running across different terminal sessions
+- `pa agent start` prevents starting duplicate agents
+- `pa agent stop` gracefully stops the agent process using the PID file
+
 #### Task Commands
 ```bash
 pa tasks list [--status STATUS] [--priority PRIORITY] [--all] [--limit N]
@@ -205,7 +211,7 @@ ruff format src/ tests/
 
 ## Project Status
 
-**Current Phase**: Phase 5 - User Interface & Notifications ✅
+**Current Phase**: Phase 6 - Agent Process Management ✅
 
 - [x] Project structure and dependencies
 - [x] Configuration system
@@ -222,12 +228,14 @@ ruff format src/ tests/
 - [x] Autonomous agent with LLM integration
 - [x] Four configurable autonomy levels
 - [x] Productivity recommendations with caching
-- [x] **CLI with Click and rich formatting**
-- [x] **macOS native notifications (osascript)**
-- [x] **Comprehensive test coverage (194 tests)**
+- [x] CLI with Click and rich formatting
+- [x] macOS native notifications (osascript)
+- [x] **PID file management for agent process tracking**
+- [x] **Cross-process agent status detection**
+- [x] **Comprehensive test coverage (226 tests)**
 
 **Next Steps**:
-- Phase 6: Meeting scheduler and calendar optimization
+- Phase 7: Meeting scheduler and calendar optimization
 
 ## Architecture
 

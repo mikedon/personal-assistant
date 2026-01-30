@@ -25,6 +25,7 @@ from src.services.agent_log_service import AgentLogService
 from src.services.llm_service import ExtractedTask, LLMError, LLMService, ProductivityRecommendation
 from src.services.task_service import TaskService
 from src.utils.config import AgentConfig, Config
+from src.utils.pid_manager import get_pid_manager, PIDFileError
 
 logger = logging.getLogger(__name__)
 
@@ -106,6 +107,9 @@ class AutonomousAgent:
         self._pending_suggestions: list[ExtractedTask] = []
         self._pending_recommendations: list[ProductivityRecommendation] = []
 
+        # PID manager for process tracking
+        self._pid_manager = get_pid_manager()
+
     @property
     def autonomy_level(self) -> AutonomyLevel:
         """Get the current autonomy level."""
@@ -136,11 +140,25 @@ class AutonomousAgent:
             logger.warning("Agent is already running")
             return
 
+        # Check if another agent process is already running
+        existing_pid = self._pid_manager.get_agent_pid()
+        if existing_pid is not None:
+            logger.warning(f"Agent is already running in process {existing_pid}")
+            raise RuntimeError(f"Agent is already running (PID: {existing_pid})")
+
         logger.info("Starting autonomous agent...")
         self.state = AgentState(
             is_running=True,
             started_at=datetime.now(UTC),
         )
+
+        # Write PID file
+        try:
+            self._pid_manager.write_pid_file()
+        except PIDFileError as e:
+            logger.error(f"Failed to write PID file: {e}")
+            self.state.is_running = False
+            raise
 
         # Initialize scheduler
         self._scheduler = AsyncIOScheduler()
@@ -220,6 +238,10 @@ class AutonomousAgent:
             )
 
         self.state.is_running = False
+
+        # Remove PID file
+        self._pid_manager.remove_pid_file()
+
         logger.info("Agent stopped")
 
     async def _poll_cycle(self) -> list[PollResult]:

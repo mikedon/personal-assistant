@@ -129,13 +129,19 @@ def agent():
 def agent_start(ctx, autonomy, foreground):
     """Start the autonomous agent."""
     from src.agent.core import get_agent
+    from src.utils.pid_manager import get_pid_manager
 
     config = ctx.obj["config"]
-    agent = get_agent(config)
+    pid_manager = get_pid_manager()
 
-    if agent.state.is_running:
-        console.print("[yellow]Agent is already running.[/yellow]")
+    # Check if agent is already running via PID file
+    existing_pid = pid_manager.get_agent_pid()
+    if existing_pid is not None:
+        console.print(f"[yellow]Agent is already running (PID: {existing_pid}).[/yellow]")
+        console.print("[dim]Use 'pa agent stop' to stop it first.[/dim]")
         return
+
+    agent = get_agent(config)
 
     if autonomy:
         agent.autonomy_level = autonomy
@@ -168,34 +174,69 @@ def agent_start(ctx, autonomy, foreground):
         except KeyboardInterrupt:
             console.print("\n[yellow]Shutting down...[/yellow]")
             run_async(agent.stop())
+        except RuntimeError as e:
+            console.print(f"[red]Error: {e}[/red]")
+            sys.exit(1)
     else:
         # Just start (for API mode)
-        run_async(agent.start())
-        console.print("[green]Agent started.[/green]")
+        try:
+            run_async(agent.start())
+            console.print("[green]Agent started.[/green]")
+        except RuntimeError as e:
+            console.print(f"[red]Error: {e}[/red]")
+            sys.exit(1)
 
 
 @agent.command("stop")
 def agent_stop():
     """Stop the autonomous agent."""
-    from src.agent.core import get_agent
+    from src.utils.pid_manager import get_pid_manager, PIDFileError
 
-    agent = get_agent()
-
-    if not agent.state.is_running:
+    pid_manager = get_pid_manager()
+    
+    # Check if agent is running
+    pid = pid_manager.get_agent_pid()
+    if pid is None:
         console.print("[yellow]Agent is not running.[/yellow]")
         return
 
-    run_async(agent.stop())
-    console.print("[green]Agent stopped.[/green]")
+    # Stop the agent process
+    try:
+        if pid_manager.stop_agent():
+            console.print(f"[green]Agent stopped (PID: {pid}).[/green]")
+        else:
+            console.print("[yellow]Agent process not found.[/yellow]")
+    except PIDFileError as e:
+        console.print(f"[red]Error stopping agent: {e}[/red]")
+        sys.exit(1)
 
 
 @agent.command("status")
 def agent_status():
     """Show agent status."""
     from src.agent.core import get_agent
+    from src.utils.pid_manager import get_pid_manager
 
-    agent = get_agent()
-    status = agent.get_status()
+    pid_manager = get_pid_manager()
+    agent_pid = pid_manager.get_agent_pid()
+    
+    # Check if agent is running via PID file
+    is_running = agent_pid is not None
+    
+    if is_running:
+        # Agent is running - try to get real status from database/logs
+        agent = get_agent()
+        status = agent.get_status()
+        
+        # Override is_running with PID-based check
+        status["is_running"] = True
+        status["pid"] = agent_pid
+    else:
+        # Agent is not running - show basic status
+        agent = get_agent()
+        status = agent.get_status()
+        status["is_running"] = False
+        status["pid"] = None
 
     # Build status panel
     status_color = "green" if status["is_running"] else "red"
@@ -205,6 +246,9 @@ def agent_status():
         f"Status: [{status_color}]{status_text}[/{status_color}]",
         f"Autonomy Level: [cyan]{status['autonomy_level']}[/cyan]",
     ]
+
+    if status.get("pid"):
+        info_lines.append(f"PID: {status['pid']}")
 
     if status["started_at"]:
         info_lines.append(f"Started: {status['started_at']}")

@@ -198,6 +198,34 @@ The priority score is calculated from five factors:
 - Priority emoji indicators for visual scanning
 
 **Rationale**:
+- Click provides robust command parsing and argument handling
+- Rich enables professional terminal UI with colors and formatting
+- Clear command hierarchy matches user mental model
+- Smart date parsing reduces friction in task entry
+
+### Agent Process Management (Phase 6)
+**Decision**: Use PID file for tracking agent across processes
+**Implementation**:
+- PID file stored at `~/.personal-assistant/agent.pid`
+- `PIDManager` class handles all PID file operations
+- Automatic cleanup of stale PID files (process no longer running)
+- Cross-platform process checking using `os.kill(pid, 0)`
+- CLI commands check PID file to determine agent status
+- Agent writes PID file on start, removes on clean shutdown
+
+**Rationale**:
+- Solves the problem of `pa agent status` not detecting agents in other processes
+- Simple Unix pattern - no additional dependencies
+- Cross-platform compatible (macOS, Linux, adaptable for Windows)
+- Handles crashes gracefully (stale PID file detection)
+- More appropriate for personal app than process managers (systemd/launchd)
+- Validates process actually exists before reporting as running
+
+**Alternative Considered**: Database flag with timestamp
+- Rejected because it requires heartbeat updates and doesn't handle crashes well
+- PID file is simpler and more reliable
+
+**Rationale**:
 - Click provides robust argument parsing and help generation
 - Rich enables beautiful terminal output without complexity
 - Subcommand groups organize related functionality
