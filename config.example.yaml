@@ -31,6 +31,13 @@ slack:
     - "general"
     - "important-updates"
 
+voice:
+  # Voice input settings
+  enabled: true
+  recording_duration_seconds: 10  # Default recording length (1-60 seconds)
+  sample_rate: 16000              # Audio sample rate (16000 recommended for Whisper)
+  whisper_model: "whisper-1"      # Whisper model variant
+
 agent:
   # How often to check integrations (in minutes)
   poll_interval_minutes: 15

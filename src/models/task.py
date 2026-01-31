@@ -37,6 +37,7 @@ class TaskSource(str, enum.Enum):
     CALENDAR = "calendar"
     MEETING_NOTES = "meeting_notes"
     AGENT = "agent"
+    VOICE = "voice"
 
 
 class Task(Base):

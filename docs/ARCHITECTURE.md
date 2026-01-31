@@ -399,7 +399,54 @@ The priority score is calculated from five factors:
 - Secure credential storage
 - User controls permissions through OAuth consent
 
+## Voice Input System
+
+### Voice Service Design
+**Decision**: Dedicated `VoiceService` for voice-to-task conversion
+**Implementation** (Phase 8):
+- Audio recording via `sounddevice` library (cross-platform)
+- Transcription via OpenAI Whisper API
+- Task extraction via existing `LLMService.extract_tasks_from_text()`
+- Fallback: if no task extracted, uses transcription as task title
+
+**Architecture**:
+```
+Microphone → sounddevice → WAV bytes → Whisper API → Text → LLM → Task
+```
+
+**Rationale**:
+- Whisper provides high-accuracy transcription
+- Reuses existing LLM infrastructure for task extraction
+- Cross-platform audio recording (macOS, Linux, Windows)
+- Graceful degradation when no task is detected
+
+### Voice Configuration
+**Settings** (`voice` section in config.yaml):
+- `enabled`: Enable/disable voice features
+- `recording_duration_seconds`: Default recording length (1-60 seconds)
+- `sample_rate`: Audio sample rate (16000 recommended for Whisper)
+- `whisper_model`: Whisper model variant (default: "whisper-1")
+
+### Voice API Endpoints
+- `POST /api/tasks/voice` - Upload audio, creates task
+- `POST /api/tasks/voice/transcribe` - Upload audio, returns transcription only
+- `GET /api/tasks/voice/status` - Check voice capabilities
+
+### CLI Voice Command
+- `pa tasks voice` - Record and create task from voice
+- Options: `--duration`, `--transcribe-only`
+- Interactive UI with progress indicator during recording
+
 ## Changelog
+
+### 2026-01-31 - Phase 8 Complete
+- Added voice input feature for task creation
+- Created `VoiceService` with audio recording, Whisper transcription, and task extraction
+- Added voice API endpoints (`/api/tasks/voice`, `/api/tasks/voice/transcribe`)
+- Added CLI command `pa tasks voice` with duration and transcribe-only options
+- Added `VOICE` to TaskSource enum
+- Added `VoiceConfig` to configuration system
+- Extended test coverage with unit and integration tests for voice features
 
 ### 2026-01-28 - Phase 5 Complete
 - Created full-featured CLI using Click with rich formatting

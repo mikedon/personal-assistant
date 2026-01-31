@@ -59,6 +59,15 @@ class NotificationConfig(BaseModel):
     due_soon_hours: int = Field(default=4, description="Hours before due date to notify")
 
 
+class VoiceConfig(BaseModel):
+    """Voice input configuration."""
+
+    enabled: bool = Field(default=True, description="Enable voice input features")
+    recording_duration_seconds: int = Field(default=10, ge=1, le=60, description="Default recording duration")
+    sample_rate: int = Field(default=16000, description="Audio sample rate (16000 recommended for Whisper)")
+    whisper_model: str = Field(default="whisper-1", description="Whisper model variant")
+
+
 class AgentConfig(BaseModel):
     """Agent behavior configuration."""
 
@@ -85,6 +94,7 @@ class Config(BaseSettings):
     slack: SlackConfig = Field(default_factory=SlackConfig)
     agent: AgentConfig = Field(default_factory=AgentConfig)
     notifications: NotificationConfig = Field(default_factory=NotificationConfig)
+    voice: VoiceConfig = Field(default_factory=VoiceConfig)
 
 
 def load_config(config_path: str | Path | None = None) -> Config:

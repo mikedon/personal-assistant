@@ -5,6 +5,7 @@ A personal assistant agent that helps track tasks, monitors multiple data source
 ## Features
 
 - **Task Management**: Create, update, and prioritize tasks with automatic scoring
+- **Voice Input**: Create tasks by speaking - uses Whisper for transcription and LLM for task extraction
 - **Multi-Source Monitoring**: Track important information from email, Slack, calendar, and Google Drive
 - **AI-Powered Agent**: Uses LLM to extract tasks and generate productivity recommendations
 - **API-First Design**: RESTful API for programmatic access
@@ -101,6 +102,7 @@ Autonomy levels: `suggest`, `auto_low`, `auto`, `full`
 ```bash
 pa tasks list [--status STATUS] [--priority PRIORITY] [--all] [--limit N]
 pa tasks add TITLE [-d DESCRIPTION] [-p PRIORITY] [-D DUE] [-t TAG]...
+pa tasks voice [-d DURATION] [--transcribe-only]  # Create task from voice
 pa tasks complete TASK_ID
 pa tasks delete TASK_ID [--yes]
 pa tasks show TASK_ID
@@ -109,6 +111,20 @@ pa tasks stats                  # Show task statistics
 ```
 
 **Due date formats**: `YYYY-MM-DD`, `today`, `tomorrow`, `+3d` (3 days), `+2w` (2 weeks)
+
+#### Voice Input
+```bash
+# Record and create a task from voice (default 10 seconds)
+pa tasks voice
+
+# Record for 15 seconds
+pa tasks voice -d 15
+
+# Just transcribe, don't create a task
+pa tasks voice --transcribe-only
+```
+
+Voice input requires a microphone and an OpenAI API key (for Whisper transcription).
 
 #### Other Commands
 ```bash
@@ -151,6 +167,11 @@ The API will be available at `http://localhost:8000`
 - `POST /api/tasks/bulk/status` - Update status for multiple tasks
 - `POST /api/tasks/bulk/delete` - Delete multiple tasks
 - `POST /api/tasks/recalculate-priorities` - Recalculate all priority scores
+
+#### Voice
+- `POST /api/tasks/voice` - Create task from audio file upload
+- `POST /api/tasks/voice/transcribe` - Transcribe audio without creating a task
+- `GET /api/tasks/voice/status` - Check voice feature status
 
 #### Status
 - `GET /health` - Health check
@@ -211,7 +232,7 @@ ruff format src/ tests/
 
 ## Project Status
 
-**Current Phase**: Phase 6 - Agent Process Management ✅
+**Current Phase**: Phase 8 - Voice Input for Task Creation ✅
 
 - [x] Project structure and dependencies
 - [x] Configuration system
@@ -230,9 +251,10 @@ ruff format src/ tests/
 - [x] Productivity recommendations with caching
 - [x] CLI with Click and rich formatting
 - [x] macOS native notifications (osascript)
-- [x] **PID file management for agent process tracking**
-- [x] **Cross-process agent status detection**
-- [x] **Comprehensive test coverage (226 tests)**
+- [x] PID file management for agent process tracking
+- [x] Cross-process agent status detection
+- [x] **Voice input for task creation (Whisper + LLM)**
+- [x] **Voice API endpoints and CLI command**
 
 **Next Steps**:
 - Phase 7: Meeting scheduler and calendar optimization

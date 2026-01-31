@@ -16,6 +16,14 @@ from src.services.notification_service import (
 )
 from src.services.recommendation_service import RecommendationService
 from src.services.task_service import TaskService
+from src.services.voice_service import (
+    MicrophoneNotFoundError,
+    TranscriptionError,
+    TranscriptionResult,
+    VoiceError,
+    VoiceService,
+    VoiceTaskResult,
+)
 
 __all__ = [
     "AgentLogService",
@@ -23,6 +31,7 @@ __all__ = [
     "LLMError",
     "LLMResponse",
     "LLMService",
+    "MicrophoneNotFoundError",
     "Notification",
     "NotificationService",
     "NotificationType",
@@ -30,4 +39,9 @@ __all__ = [
     "ProductivityRecommendation",
     "RecommendationService",
     "TaskService",
+    "TranscriptionError",
+    "TranscriptionResult",
+    "VoiceError",
+    "VoiceService",
+    "VoiceTaskResult",
 ]

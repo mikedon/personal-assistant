@@ -351,8 +351,8 @@ def tasks_list(status, priority, show_all, limit):
 
         table = Table(title=f"Tasks ({len(tasks)} of {total})")
         table.add_column("ID", style="dim", width=4)
-        table.add_column("Pri", width=4)
-        table.add_column("Title", style="white", max_width=50)
+        table.add_column("Pri", width=3)
+        table.add_column("Title", style="white", min_width=20, max_width=50)
         table.add_column("Status", width=12)
         table.add_column("Due", width=15)
         table.add_column("Source", style="dim", width=8)
@@ -364,10 +364,11 @@ def tasks_list(status, priority, show_all, limit):
                 task.priority.value, "⚪"
             )
 
+            title_text = task.title[:50] if task.title else "(no title)"
             table.add_row(
                 str(task.id),
                 pri_emoji,
-                Text(task.title[:50], style=pri_style),
+                f"[{pri_style}]{title_text}[/{pri_style}]",
                 Text(task.status.value, style=status_style),
                 format_due_date(task.due_date),
                 task.source.value[:8],
@@ -540,6 +541,152 @@ def tasks_stats():
             table.add_row(status, str(count))
 
         console.print(table)
+
+
+@tasks.command("voice")
+@click.option("--duration", "-d", default=10, type=int, help="Recording duration in seconds (1-60)")
+@click.option("--transcribe-only", "-t", is_flag=True, help="Only transcribe, don't create a task")
+def tasks_voice(duration, transcribe_only):
+    """Create a task from voice input.
+
+    Records audio from your microphone, transcribes it using Whisper,
+    and creates a task from the transcription.
+    """
+    from src.services.voice_service import (
+        MicrophoneNotFoundError,
+        TranscriptionError,
+        VoiceError,
+        VoiceService,
+    )
+
+    config = get_config()
+
+    # Check if voice is enabled
+    if not config.voice.enabled:
+        console.print("[red]Voice features are disabled in configuration.[/red]")
+        console.print("[dim]Set voice.enabled: true in config.yaml to enable.[/dim]")
+        return
+
+    # Validate duration
+    if duration < 1 or duration > 60:
+        console.print("[red]Duration must be between 1 and 60 seconds.[/red]")
+        return
+
+    # Initialize voice service
+    voice_service = VoiceService(
+        voice_config=config.voice,
+        llm_config=config.llm,
+    )
+
+    # Check microphone availability
+    if not voice_service.check_microphone_available():
+        console.print("[red]No microphone found.[/red]")
+        console.print("[dim]Please connect a microphone and try again.[/dim]")
+        return
+
+    try:
+        # Recording phase with countdown
+        console.print(Panel(
+            f"[bold cyan]Recording for {duration} seconds...[/bold cyan]\n"
+            "[dim]Speak your task now![/dim]",
+            title="🎤 Voice Input",
+        ))
+
+        with Progress(
+            SpinnerColumn(),
+            TextColumn("[progress.description]{task.description}"),
+            console=console,
+        ) as progress:
+            task = progress.add_task(f"Recording ({duration}s)...", total=None)
+
+            # Record audio
+            audio_data = voice_service.record_audio(duration_seconds=duration)
+
+            progress.update(task, description="Transcribing...")
+
+            # Transcribe
+            transcription_result = voice_service.transcribe_audio(audio_data)
+
+        if not transcription_result.text:
+            console.print("[yellow]No speech detected in the recording.[/yellow]")
+            console.print("[dim]Try speaking more clearly or increasing the duration.[/dim]")
+            return
+
+        # Show transcription
+        console.print(f"\n[bold]Transcription:[/bold]")
+        console.print(Panel(transcription_result.text, border_style="cyan"))
+
+        if transcribe_only:
+            return
+
+        # Extract and create task
+        with Progress(
+            SpinnerColumn(),
+            TextColumn("[progress.description]{task.description}"),
+            console=console,
+        ) as progress:
+            task = progress.add_task("Analyzing and creating task...", total=None)
+
+            with get_db_session() as db:
+                task_service = TaskService(db)
+
+                # Extract task using LLM
+                extracted_tasks = run_async(
+                    voice_service.extract_task_from_transcription(transcription_result.text)
+                )
+
+                if extracted_tasks:
+                    task_data = extracted_tasks[0]
+                    from src.models.task import TaskPriority, TaskSource
+
+                    created_task = task_service.create_task(
+                        title=task_data.title,
+                        description=task_data.description,
+                        priority=TaskPriority(task_data.priority),
+                        source=TaskSource.VOICE,
+                        due_date=task_data.due_date,
+                        tags=task_data.tags,
+                    )
+                else:
+                    # Fallback: create simple task from transcription
+                    from src.models.task import TaskPriority, TaskSource
+
+                    created_task = task_service.create_task(
+                        title=transcription_result.text[:200],
+                        description=None,
+                        priority=TaskPriority.MEDIUM,
+                        source=TaskSource.VOICE,
+                    )
+
+                # Capture task info while session is still open
+                task_id = created_task.id
+                task_title = created_task.title
+                task_priority = created_task.priority.value
+                task_due_date = created_task.due_date
+                task_tags = created_task.get_tags_list()
+
+        # Show created task (using captured values)
+        pri_emoji = {"critical": "🔴", "high": "🟠", "medium": "🟡", "low": "🟢"}.get(
+            task_priority, "⚪"
+        )
+        console.print(f"\n[green]✓[/green] Created task #{task_id}: {pri_emoji} {task_title}")
+
+        if task_due_date:
+            console.print(f"  Due: {format_due_date(task_due_date)}")
+
+        if task_tags:
+            console.print(f"  Tags: {', '.join(task_tags)}")
+
+    except MicrophoneNotFoundError:
+        console.print("[red]No microphone found.[/red]")
+        console.print("[dim]Please connect a microphone and try again.[/dim]")
+    except TranscriptionError as e:
+        console.print(f"[red]Transcription failed: {e}[/red]")
+        console.print("[dim]Check your API key and try again.[/dim]")
+    except VoiceError as e:
+        console.print(f"[red]Voice error: {e}[/red]")
+    except Exception as e:
+        console.print(f"[red]Unexpected error: {e}[/red]")
 
 
 # --- Summary Command ---

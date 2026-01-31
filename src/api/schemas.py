@@ -115,3 +115,20 @@ class AgentStatusResponse(BaseModel):
     last_poll: datetime | None
     tasks_pending: int
     notifications_unread: int
+
+
+# Voice Schemas
+class TranscriptionResponse(BaseModel):
+    """Response for audio transcription."""
+
+    text: str
+    language: str | None = None
+    duration_seconds: float | None = None
+
+
+class VoiceTaskResponse(BaseModel):
+    """Response for voice task creation."""
+
+    transcription: str
+    task: "TaskResponse | None" = None
+    extracted_tasks_count: int = 0
