@@ -59,13 +59,48 @@ class AgentState:
 
 
 @dataclass
+class PendingSuggestion:
+    """A pending task suggestion with full context for review."""
+
+    # Task details from LLM extraction
+    title: str
+    description: str | None = None
+    priority: str = "medium"
+    due_date: datetime | None = None
+    tags: list[str] | None = None
+    confidence: float = 0.5
+
+    # Source context
+    source: IntegrationType | None = None
+    source_reference: str | None = None  # ID in source system (e.g., Gmail message ID)
+    source_url: str | None = None  # Direct URL to source (e.g., Gmail URL)
+
+    # Reasoning and context
+    reasoning: str | None = None  # Why agent suggests this task
+    original_title: str | None = None  # Original item title (e.g., email subject)
+    original_sender: str | None = None  # Who sent the original item
+    original_snippet: str | None = None  # Preview of original content
+
+    def to_extracted_task(self) -> ExtractedTask:
+        """Convert to ExtractedTask for task creation."""
+        return ExtractedTask(
+            title=self.title,
+            description=self.description,
+            priority=self.priority,
+            due_date=self.due_date,
+            tags=self.tags,
+            confidence=self.confidence,
+        )
+
+
+@dataclass
 class PollResult:
     """Result of a polling cycle."""
 
     integration: IntegrationType
     items_found: list[ActionableItem] = field(default_factory=list)
     tasks_created: list[int] = field(default_factory=list)
-    tasks_suggested: list[ExtractedTask] = field(default_factory=list)
+    tasks_suggested: list[PendingSuggestion] = field(default_factory=list)
     duration_seconds: float = 0.0
     error: str | None = None
 
@@ -107,7 +142,7 @@ class AutonomousAgent:
         self._scheduler: AsyncIOScheduler | None = None
 
         # Pending suggestions (for SUGGEST mode)
-        self._pending_suggestions: list[ExtractedTask] = []
+        self._pending_suggestions: list[PendingSuggestion] = []
         self._pending_recommendations: list[ProductivityRecommendation] = []
 
         # PID manager for process tracking
@@ -332,11 +367,104 @@ class AutonomousAgent:
 
         return results
 
+    def _generate_source_url(
+        self,
+        source: IntegrationType,
+        source_reference: str | None,
+        metadata: dict[str, Any] | None = None,
+    ) -> str | None:
+        """Generate a URL to the source item.
+
+        Args:
+            source: The integration type
+            source_reference: The source-specific reference ID
+            metadata: Additional metadata that may contain thread_id etc.
+
+        Returns:
+            URL string or None if not available
+        """
+        if not source_reference:
+            return None
+
+        if source == IntegrationType.GMAIL:
+            # Gmail URL format: https://mail.google.com/mail/u/0/#inbox/<message_id>
+            # Or thread view: https://mail.google.com/mail/u/0/#inbox/<thread_id>
+            thread_id = metadata.get("thread_id") if metadata else None
+            ref_id = thread_id or source_reference
+            return f"https://mail.google.com/mail/u/0/#inbox/{ref_id}"
+
+        elif source == IntegrationType.SLACK:
+            # Slack URL format: https://app.slack.com/client/<workspace>/<channel>/thread/<ts>
+            # source_reference format: "channel_id:timestamp"
+            if ":" in source_reference:
+                channel, ts = source_reference.split(":", 1)
+                # Note: This is a simplified URL; actual Slack URLs require workspace ID
+                return f"https://app.slack.com/client/T0/C{channel}/thread/{ts}"
+            return None
+
+        elif source == IntegrationType.CALENDAR:
+            # Google Calendar event URL
+            return f"https://calendar.google.com/calendar/event?eid={source_reference}"
+
+        elif source == IntegrationType.DRIVE:
+            # Google Drive file URL
+            return f"https://drive.google.com/file/d/{source_reference}/view"
+
+        return None
+
+    def _build_suggestion_reasoning(
+        self,
+        task: ExtractedTask,
+        item: ActionableItem,
+        source: IntegrationType,
+    ) -> str:
+        """Build reasoning text for why a task suggestion was created.
+
+        Args:
+            task: The extracted task
+            item: The original actionable item
+            source: Source integration type
+
+        Returns:
+            Reasoning string
+        """
+        reasons = []
+
+        # Confidence-based reasoning
+        if task.confidence >= 0.8:
+            reasons.append(f"High confidence ({task.confidence:.0%}) that this requires action")
+        elif task.confidence >= 0.6:
+            reasons.append(f"Moderate confidence ({task.confidence:.0%}) that this may require action")
+        else:
+            reasons.append(f"Low confidence ({task.confidence:.0%}) - may need review")
+
+        # Source-based reasoning
+        source_reasons = {
+            IntegrationType.GMAIL: "Found in email that appears to require a response or action",
+            IntegrationType.SLACK: "Found in Slack message that may need follow-up",
+            IntegrationType.CALENDAR: "Related to an upcoming calendar event",
+            IntegrationType.DRIVE: "Found in document that contains action items",
+        }
+        if source in source_reasons:
+            reasons.append(source_reasons[source])
+
+        # Priority-based reasoning
+        if task.priority == "critical":
+            reasons.append("Marked as critical due to urgency indicators")
+        elif task.priority == "high":
+            reasons.append("Marked as high priority based on deadline or importance")
+
+        # Due date reasoning
+        if task.due_date:
+            reasons.append(f"Has a detected deadline: {task.due_date.strftime('%Y-%m-%d')}")
+
+        return ". ".join(reasons) + "."
+
     async def _process_actionable_items(
         self,
         items: list[ActionableItem],
         source: IntegrationType,
-    ) -> tuple[list[int], list[ExtractedTask]]:
+    ) -> tuple[list[int], list[PendingSuggestion]]:
         """Process actionable items and extract/create tasks.
 
         Args:
@@ -347,7 +475,7 @@ class AutonomousAgent:
             Tuple of (created_task_ids, suggested_tasks)
         """
         created_task_ids: list[int] = []
-        suggested_tasks: list[ExtractedTask] = []
+        suggested_tasks: list[PendingSuggestion] = []
 
         for item in items:
             self.state.items_processed_session += 1
@@ -386,8 +514,30 @@ class AutonomousAgent:
                             if task_id:
                                 created_task_ids.append(task_id)
                         else:
-                            suggested_tasks.append(task)
-                            self._pending_suggestions.append(task)
+                            # Create enhanced suggestion with full context
+                            suggestion = PendingSuggestion(
+                                title=task.title,
+                                description=task.description,
+                                priority=task.priority,
+                                due_date=task.due_date,
+                                tags=task.tags,
+                                confidence=task.confidence,
+                                source=source,
+                                source_reference=item.source_reference,
+                                source_url=self._generate_source_url(
+                                    source, item.source_reference, item.metadata
+                                ),
+                                reasoning=self._build_suggestion_reasoning(task, item, source),
+                                original_title=item.title,
+                                original_sender=item.metadata.get("sender") if item.metadata else None,
+                                original_snippet=(
+                                    item.description[:200] + "..."
+                                    if item.description and len(item.description) > 200
+                                    else item.description
+                                ),
+                            )
+                            suggested_tasks.append(suggestion)
+                            self._pending_suggestions.append(suggestion)
 
             except LLMError as e:
                 logger.error(f"LLM extraction failed: {e}")
@@ -773,7 +923,7 @@ class AutonomousAgent:
             },
         }
 
-    def get_pending_suggestions(self) -> list[ExtractedTask]:
+    def get_pending_suggestions(self) -> list[PendingSuggestion]:
         """Get pending task suggestions.
 
         Returns:
@@ -784,6 +934,119 @@ class AutonomousAgent:
     def clear_pending_suggestions(self) -> None:
         """Clear pending task suggestions."""
         self._pending_suggestions = []
+
+    def approve_suggestion(self, index: int) -> int | None:
+        """Approve a pending suggestion and create the task.
+
+        Args:
+            index: Index of the suggestion in pending list
+
+        Returns:
+            Created task ID or None if failed
+        """
+        if index < 0 or index >= len(self._pending_suggestions):
+            logger.warning(f"Invalid suggestion index: {index}")
+            return None
+
+        suggestion = self._pending_suggestions[index]
+
+        # Map priority
+        priority_map = {
+            "critical": TaskPriority.CRITICAL,
+            "high": TaskPriority.HIGH,
+            "medium": TaskPriority.MEDIUM,
+            "low": TaskPriority.LOW,
+        }
+        priority = priority_map.get(suggestion.priority, TaskPriority.MEDIUM)
+
+        # Map source
+        source_map = {
+            IntegrationType.GMAIL: TaskSource.EMAIL,
+            IntegrationType.SLACK: TaskSource.SLACK,
+            IntegrationType.CALENDAR: TaskSource.CALENDAR,
+            IntegrationType.DRIVE: TaskSource.MEETING_NOTES,
+        }
+        task_source = source_map.get(suggestion.source, TaskSource.AGENT) if suggestion.source else TaskSource.AGENT
+
+        try:
+            with get_db_session() as db:
+                task_service = TaskService(db)
+                task = task_service.create_task(
+                    title=suggestion.title,
+                    description=suggestion.description,
+                    priority=priority,
+                    source=task_source,
+                    source_reference=suggestion.source_reference,
+                    due_date=suggestion.due_date,
+                    tags=suggestion.tags or [],
+                )
+
+                # Log task creation
+                log_service = AgentLogService(db)
+                log_service.log_task_creation(
+                    task_id=task.id,
+                    task_title=task.title,
+                    source=suggestion.source.value if suggestion.source else "manual",
+                )
+
+                # Log the approval decision
+                log_service.log_decision(
+                    decision="approve_suggestion",
+                    reasoning="User approved the suggested task",
+                    outcome="approved",
+                    context={
+                        "task_title": suggestion.title[:100],
+                        "task_id": task.id,
+                        "source": suggestion.source.value if suggestion.source else None,
+                    },
+                )
+
+                self.state.tasks_created_session += 1
+
+                # Remove from pending list
+                self._pending_suggestions.pop(index)
+
+                return task.id
+
+        except Exception as e:
+            logger.error(f"Failed to create task from suggestion: {e}")
+            return None
+
+    def reject_suggestion(self, index: int) -> bool:
+        """Reject a pending suggestion.
+
+        Args:
+            index: Index of the suggestion in pending list
+
+        Returns:
+            True if rejected successfully
+        """
+        if index < 0 or index >= len(self._pending_suggestions):
+            logger.warning(f"Invalid suggestion index: {index}")
+            return False
+
+        suggestion = self._pending_suggestions[index]
+
+        try:
+            with get_db_session() as db:
+                log_service = AgentLogService(db)
+                log_service.log_decision(
+                    decision="reject_suggestion",
+                    reasoning="User rejected the suggested task",
+                    outcome="rejected",
+                    context={
+                        "task_title": suggestion.title[:100],
+                        "source": suggestion.source.value if suggestion.source else None,
+                    },
+                )
+
+            # Remove from pending list
+            self._pending_suggestions.pop(index)
+            return True
+
+        except Exception as e:
+            logger.error(f"Failed to reject suggestion: {e}")
+            return False
 
     def get_pending_recommendations(self) -> list[ProductivityRecommendation]:
         """Get pending recommendations.

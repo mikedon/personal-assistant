@@ -125,8 +125,9 @@ class ActivitySummaryResponse(BaseModel):
 
 
 class SuggestionResponse(BaseModel):
-    """Task suggestion from LLM."""
+    """Task suggestion from LLM with full context."""
 
+    # Task details
     title: str
     description: str | None
     priority: str
@@ -134,12 +135,37 @@ class SuggestionResponse(BaseModel):
     tags: list[str] | None
     confidence: float
 
+    # Source context
+    source: str | None = Field(default=None, description="Source integration (gmail, slack, etc.)")
+    source_reference: str | None = Field(default=None, description="ID in source system")
+    source_url: str | None = Field(default=None, description="Direct URL to source")
+
+    # Reasoning and context
+    reasoning: str | None = Field(default=None, description="Why the agent suggests this task")
+    original_title: str | None = Field(default=None, description="Original item title (e.g., email subject)")
+    original_sender: str | None = Field(default=None, description="Who sent the original item")
+    original_snippet: str | None = Field(default=None, description="Preview of original content")
+
 
 class SuggestionsResponse(BaseModel):
     """List of pending task suggestions."""
 
     suggestions: list[SuggestionResponse]
     count: int
+
+
+class ApproveRejectRequest(BaseModel):
+    """Request to approve or reject a suggestion."""
+
+    index: int = Field(..., ge=0, description="Index of the suggestion to approve/reject")
+
+
+class ApproveRejectResponse(BaseModel):
+    """Response from approve/reject action."""
+
+    success: bool
+    task_id: int | None = Field(default=None, description="Created task ID (if approved)")
+    remaining: int = Field(..., description="Number of remaining suggestions")
 
 
 # --- Dependencies ---
@@ -325,7 +351,13 @@ async def get_overdue_action_plan(
 
 @router.get("/suggestions", response_model=SuggestionsResponse)
 def get_pending_suggestions() -> SuggestionsResponse:
-    """Get pending task suggestions (from SUGGEST mode)."""
+    """Get pending task suggestions (from SUGGEST mode).
+
+    Returns suggestions with full context including:
+    - Task details (title, description, priority, due date, tags)
+    - Source information (integration, sender, URL to source)
+    - Reasoning for why the agent suggests this task
+    """
     agent = get_agent()
     suggestions = agent.get_pending_suggestions()
 
@@ -338,10 +370,65 @@ def get_pending_suggestions() -> SuggestionsResponse:
                 due_date=s.due_date,
                 tags=s.tags,
                 confidence=s.confidence,
+                source=s.source.value if s.source else None,
+                source_reference=s.source_reference,
+                source_url=s.source_url,
+                reasoning=s.reasoning,
+                original_title=s.original_title,
+                original_sender=s.original_sender,
+                original_snippet=s.original_snippet,
             )
             for s in suggestions
         ],
         count=len(suggestions),
+    )
+
+
+@router.post("/suggestions/{index}/approve", response_model=ApproveRejectResponse)
+def approve_suggestion(index: int) -> ApproveRejectResponse:
+    """Approve a pending suggestion and create the task.
+
+    Args:
+        index: Index of the suggestion in the pending list (0-based)
+
+    Returns:
+        Result with created task ID if successful
+    """
+    agent = get_agent()
+
+    if index < 0 or index >= len(agent.get_pending_suggestions()):
+        raise HTTPException(status_code=404, detail=f"Suggestion at index {index} not found")
+
+    task_id = agent.approve_suggestion(index)
+
+    return ApproveRejectResponse(
+        success=task_id is not None,
+        task_id=task_id,
+        remaining=len(agent.get_pending_suggestions()),
+    )
+
+
+@router.post("/suggestions/{index}/reject", response_model=ApproveRejectResponse)
+def reject_suggestion(index: int) -> ApproveRejectResponse:
+    """Reject a pending suggestion.
+
+    Args:
+        index: Index of the suggestion in the pending list (0-based)
+
+    Returns:
+        Result indicating success
+    """
+    agent = get_agent()
+
+    if index < 0 or index >= len(agent.get_pending_suggestions()):
+        raise HTTPException(status_code=404, detail=f"Suggestion at index {index} not found")
+
+    success = agent.reject_suggestion(index)
+
+    return ApproveRejectResponse(
+        success=success,
+        task_id=None,
+        remaining=len(agent.get_pending_suggestions()),
     )
 
 

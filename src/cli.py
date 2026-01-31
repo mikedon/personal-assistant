@@ -312,6 +312,176 @@ def agent_poll():
         else:
             console.print(f"[dim]✓[/dim] {result.integration.value}: No new items")
 
+    # Prompt to review if there are suggestions
+    suggestions = agent.get_pending_suggestions()
+    if suggestions:
+        console.print(f"\n[cyan]💡 {len(suggestions)} suggestion(s) pending review.[/cyan]")
+        console.print("[dim]Run 'pa agent review' to review them.[/dim]")
+
+
+@agent.command("review")
+@click.option("--auto-approve", "-a", is_flag=True, help="Auto-approve all suggestions")
+@click.option("--auto-reject", "-r", is_flag=True, help="Auto-reject all suggestions")
+def agent_review(auto_approve, auto_reject):
+    """Review and approve/reject pending task suggestions.
+
+    Interactively review each suggestion with options to:
+    - [a]pprove: Create the task
+    - [r]eject: Discard the suggestion
+    - [s]kip: Skip for now (keep in pending)
+    - [q]uit: Stop reviewing
+    """
+    from src.agent.core import get_agent, PendingSuggestion
+
+    agent = get_agent()
+    suggestions = agent.get_pending_suggestions()
+
+    if not suggestions:
+        console.print("[dim]No pending suggestions to review.[/dim]")
+        return
+
+    console.print(Panel(
+        f"[bold]Reviewing {len(suggestions)} pending suggestion(s)[/bold]\n\n"
+        "For each suggestion, you can:\n"
+        "  [green][a]pprove[/green] - Create the task\n"
+        "  [red][r]eject[/red] - Discard the suggestion\n"
+        "  [yellow][s]kip[/yellow] - Keep for later\n"
+        "  [dim][q]uit[/dim] - Stop reviewing",
+        title="Suggestion Review",
+    ))
+
+    if auto_approve and auto_reject:
+        console.print("[red]Cannot use both --auto-approve and --auto-reject[/red]")
+        return
+
+    approved_count = 0
+    rejected_count = 0
+    skipped_count = 0
+
+    # Process suggestions (iterate while we have any, but use index 0 since approved/rejected get removed)
+    index = 0
+    while index < len(agent.get_pending_suggestions()):
+        suggestions = agent.get_pending_suggestions()
+        if index >= len(suggestions):
+            break
+
+        suggestion = suggestions[index]
+        remaining = len(suggestions) - index
+
+        console.print(f"\n[bold cyan]━━━ Suggestion {index + 1} of {len(suggestions)} ━━━[/bold cyan]")
+
+        # Display suggestion details
+        _display_suggestion(suggestion, index + 1, remaining)
+
+        # Get user action
+        if auto_approve:
+            action = "a"
+        elif auto_reject:
+            action = "r"
+        else:
+            action = click.prompt(
+                "\n[a]pprove / [r]eject / [s]kip / [q]uit",
+                type=click.Choice(["a", "r", "s", "q"], case_sensitive=False),
+                default="s",
+                show_choices=False,
+            )
+
+        if action == "a":
+            task_id = agent.approve_suggestion(index)
+            if task_id:
+                console.print(f"[green]✓ Created task #{task_id}[/green]")
+                approved_count += 1
+            else:
+                console.print("[red]Failed to create task[/red]")
+                index += 1
+        elif action == "r":
+            if agent.reject_suggestion(index):
+                console.print("[red]✗ Suggestion rejected[/red]")
+                rejected_count += 1
+            else:
+                console.print("[red]Failed to reject suggestion[/red]")
+                index += 1
+        elif action == "s":
+            console.print("[yellow]→ Skipped[/yellow]")
+            skipped_count += 1
+            index += 1
+        elif action == "q":
+            console.print("[dim]Stopping review...[/dim]")
+            break
+
+    # Summary
+    console.print(f"\n[bold]Review Complete[/bold]")
+    console.print(f"  [green]Approved:[/green] {approved_count}")
+    console.print(f"  [red]Rejected:[/red] {rejected_count}")
+    console.print(f"  [yellow]Skipped:[/yellow] {skipped_count}")
+
+    remaining = len(agent.get_pending_suggestions())
+    if remaining > 0:
+        console.print(f"  [dim]Remaining:[/dim] {remaining}")
+
+
+def _display_suggestion(suggestion, number: int, remaining: int) -> None:
+    """Display a single suggestion in a rich panel."""
+    # Priority emoji and style
+    pri_emoji = {"critical": "🔴", "high": "🟠", "medium": "🟡", "low": "🟢"}.get(
+        suggestion.priority, "⚪"
+    )
+    pri_style = {"critical": "bold red", "high": "red", "medium": "yellow", "low": "green"}.get(
+        suggestion.priority, "white"
+    )
+
+    # Build content
+    lines = [
+        f"[bold]{pri_emoji} {suggestion.title}[/bold]",
+        "",
+        f"[{pri_style}]Priority: {suggestion.priority.upper()}[/{pri_style}]   "
+        f"Confidence: {suggestion.confidence:.0%}",
+    ]
+
+    if suggestion.description:
+        lines.append(f"\n[dim]Description:[/dim] {suggestion.description[:200]}{'...' if len(suggestion.description or '') > 200 else ''}")
+
+    if suggestion.due_date:
+        lines.append(f"[cyan]Due:[/cyan] {format_due_date(suggestion.due_date)}")
+
+    if suggestion.tags:
+        tags_str = ", ".join(f"#{t}" for t in suggestion.tags)
+        lines.append(f"[dim]Tags:[/dim] {tags_str}")
+
+    # Source information
+    lines.append("")
+    lines.append("[bold dim]Source Information[/bold dim]")
+
+    if suggestion.source:
+        source_emoji = {
+            "gmail": "📧", "slack": "💬", "calendar": "📅", "drive": "📁"
+        }.get(suggestion.source.value, "📌")
+        lines.append(f"{source_emoji} Source: [cyan]{suggestion.source.value.title()}[/cyan]")
+
+    if suggestion.original_sender:
+        lines.append(f"   From: {suggestion.original_sender}")
+
+    if suggestion.original_title:
+        lines.append(f"   Subject: {suggestion.original_title[:60]}{'...' if len(suggestion.original_title or '') > 60 else ''}")
+
+    if suggestion.source_url:
+        lines.append(f"   [link={suggestion.source_url}]🔗 Open in browser[/link]")
+        lines.append(f"   [dim]{suggestion.source_url}[/dim]")
+
+    # Reasoning
+    if suggestion.reasoning:
+        lines.append("")
+        lines.append("[bold dim]Why this suggestion?[/bold dim]")
+        lines.append(f"[italic]{suggestion.reasoning}[/italic]")
+
+    # Original content snippet
+    if suggestion.original_snippet:
+        lines.append("")
+        lines.append("[bold dim]Original Content Preview[/bold dim]")
+        lines.append(f"[dim]{suggestion.original_snippet}[/dim]")
+
+    console.print(Panel("\n".join(lines), title=f"Suggestion #{number}", border_style="cyan"))
+
 
 # --- Task Commands ---
 

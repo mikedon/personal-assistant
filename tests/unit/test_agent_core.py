@@ -9,6 +9,7 @@ from src.agent.core import (
     AgentState,
     AutonomousAgent,
     AutonomyLevel,
+    PendingSuggestion,
     PollResult,
     get_agent,
     reset_agent,
@@ -208,21 +209,223 @@ class TestPendingSuggestions:
     def test_clear_pending_suggestions(self, agent):
         """Test clearing suggestions."""
         agent._pending_suggestions = [
-            ExtractedTask(title="Test 1"),
-            ExtractedTask(title="Test 2"),
+            PendingSuggestion(title="Test 1"),
+            PendingSuggestion(title="Test 2"),
         ]
         agent.clear_pending_suggestions()
         assert len(agent._pending_suggestions) == 0
 
     def test_get_pending_suggestions_returns_copy(self, agent):
         """Test that get_pending_suggestions returns a copy."""
-        task = ExtractedTask(title="Test")
-        agent._pending_suggestions = [task]
+        suggestion = PendingSuggestion(title="Test")
+        agent._pending_suggestions = [suggestion]
         
         suggestions = agent.get_pending_suggestions()
-        suggestions.append(ExtractedTask(title="New"))
+        suggestions.append(PendingSuggestion(title="New"))
         
         assert len(agent._pending_suggestions) == 1
+
+
+class TestPendingSuggestionDataclass:
+    """Tests for PendingSuggestion dataclass."""
+
+    def test_pending_suggestion_basic(self):
+        """Test basic PendingSuggestion creation."""
+        suggestion = PendingSuggestion(
+            title="Test Task",
+            description="A test task",
+            priority="high",
+            confidence=0.85,
+        )
+        assert suggestion.title == "Test Task"
+        assert suggestion.priority == "high"
+        assert suggestion.confidence == 0.85
+
+    def test_pending_suggestion_with_source(self):
+        """Test PendingSuggestion with source context."""
+        suggestion = PendingSuggestion(
+            title="Reply to email",
+            source=IntegrationType.GMAIL,
+            source_reference="msg_123",
+            source_url="https://mail.google.com/mail/u/0/#inbox/msg_123",
+            original_sender="john@example.com",
+            original_title="Meeting followup",
+            reasoning="High confidence that this requires action.",
+        )
+        assert suggestion.source == IntegrationType.GMAIL
+        assert suggestion.source_url is not None
+        assert "mail.google.com" in suggestion.source_url
+
+    def test_to_extracted_task(self):
+        """Test converting PendingSuggestion to ExtractedTask."""
+        from datetime import datetime
+
+        suggestion = PendingSuggestion(
+            title="Test Task",
+            description="Description",
+            priority="critical",
+            due_date=datetime(2026, 2, 1),
+            tags=["test", "urgent"],
+            confidence=0.95,
+        )
+        extracted = suggestion.to_extracted_task()
+
+        assert extracted.title == suggestion.title
+        assert extracted.description == suggestion.description
+        assert extracted.priority == suggestion.priority
+        assert extracted.due_date == suggestion.due_date
+        assert extracted.tags == suggestion.tags
+        assert extracted.confidence == suggestion.confidence
+
+
+class TestSourceUrlGeneration:
+    """Tests for source URL generation."""
+
+    def test_gmail_url(self, agent):
+        """Test Gmail URL generation."""
+        url = agent._generate_source_url(
+            IntegrationType.GMAIL,
+            "msg_12345",
+            {"thread_id": "thread_abc"}
+        )
+        assert url is not None
+        assert "mail.google.com" in url
+        assert "thread_abc" in url  # Uses thread_id if available
+
+    def test_gmail_url_no_thread(self, agent):
+        """Test Gmail URL without thread_id."""
+        url = agent._generate_source_url(
+            IntegrationType.GMAIL,
+            "msg_12345",
+            None
+        )
+        assert url is not None
+        assert "msg_12345" in url
+
+    def test_slack_url(self, agent):
+        """Test Slack URL generation."""
+        url = agent._generate_source_url(
+            IntegrationType.SLACK,
+            "C123456:1234567890.123456",
+            None
+        )
+        assert url is not None
+        assert "slack.com" in url
+
+    def test_calendar_url(self, agent):
+        """Test Calendar URL generation."""
+        url = agent._generate_source_url(
+            IntegrationType.CALENDAR,
+            "event_123",
+            None
+        )
+        assert url is not None
+        assert "calendar.google.com" in url
+
+    def test_no_reference(self, agent):
+        """Test URL generation with no reference returns None."""
+        url = agent._generate_source_url(IntegrationType.GMAIL, None, None)
+        assert url is None
+
+
+class TestSuggestionApproval:
+    """Tests for suggestion approval/rejection."""
+
+    def test_approve_suggestion_invalid_index(self, agent):
+        """Test approving with invalid index returns None."""
+        result = agent.approve_suggestion(99)
+        assert result is None
+
+    def test_reject_suggestion_invalid_index(self, agent):
+        """Test rejecting with invalid index returns False."""
+        result = agent.reject_suggestion(99)
+        assert result is False
+
+    def test_approve_suggestion_success(self, agent, test_db_session):
+        """Test successful suggestion approval creates task."""
+        suggestion = PendingSuggestion(
+            title="Test Task",
+            description="Test description",
+            priority="high",
+            source=IntegrationType.GMAIL,
+            source_reference="msg_123",
+        )
+        agent._pending_suggestions = [suggestion]
+
+        with patch("src.agent.core.get_db_session") as mock_db:
+            mock_db.return_value.__enter__ = MagicMock(return_value=test_db_session)
+            mock_db.return_value.__exit__ = MagicMock(return_value=False)
+
+            with patch("src.agent.core.TaskService") as mock_task_service:
+                mock_task = MagicMock()
+                mock_task.id = 42
+                mock_task.title = "Test Task"
+                mock_task_service.return_value.create_task.return_value = mock_task
+
+                with patch("src.agent.core.AgentLogService"):
+                    task_id = agent.approve_suggestion(0)
+
+        assert task_id == 42
+        assert len(agent._pending_suggestions) == 0
+        assert agent.state.tasks_created_session == 1
+
+    def test_reject_suggestion_success(self, agent, test_db_session):
+        """Test successful suggestion rejection removes it."""
+        suggestion = PendingSuggestion(
+            title="Test Task",
+            source=IntegrationType.GMAIL,
+        )
+        agent._pending_suggestions = [suggestion]
+
+        with patch("src.agent.core.get_db_session") as mock_db:
+            mock_db.return_value.__enter__ = MagicMock(return_value=test_db_session)
+            mock_db.return_value.__exit__ = MagicMock(return_value=False)
+
+            with patch("src.agent.core.AgentLogService"):
+                result = agent.reject_suggestion(0)
+
+        assert result is True
+        assert len(agent._pending_suggestions) == 0
+
+
+class TestBuildSuggestionReasoning:
+    """Tests for reasoning generation."""
+
+    def test_high_confidence_reasoning(self, agent):
+        """Test reasoning for high confidence task."""
+        task = ExtractedTask(title="Test", confidence=0.9)
+        item = ActionableItem(
+            type=ActionableItemType.EMAIL_REPLY_NEEDED,
+            title="Test email",
+        )
+        reasoning = agent._build_suggestion_reasoning(task, item, IntegrationType.GMAIL)
+
+        assert "High confidence" in reasoning
+        assert "90%" in reasoning
+
+    def test_low_confidence_reasoning(self, agent):
+        """Test reasoning for low confidence task."""
+        task = ExtractedTask(title="Test", confidence=0.4)
+        item = ActionableItem(
+            type=ActionableItemType.EMAIL_REPLY_NEEDED,
+            title="Test email",
+        )
+        reasoning = agent._build_suggestion_reasoning(task, item, IntegrationType.GMAIL)
+
+        assert "Low confidence" in reasoning
+        assert "may need review" in reasoning
+
+    def test_critical_priority_reasoning(self, agent):
+        """Test reasoning includes priority information."""
+        task = ExtractedTask(title="Test", priority="critical", confidence=0.8)
+        item = ActionableItem(
+            type=ActionableItemType.EMAIL_REPLY_NEEDED,
+            title="Test email",
+        )
+        reasoning = agent._build_suggestion_reasoning(task, item, IntegrationType.GMAIL)
+
+        assert "critical" in reasoning.lower()
+        assert "urgency" in reasoning.lower()
 
 
 class TestGetAgent:
