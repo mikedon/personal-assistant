@@ -23,6 +23,7 @@ from src.models.database import get_db_session
 from src.models.task import TaskPriority, TaskSource
 from src.services.agent_log_service import AgentLogService
 from src.services.llm_service import ExtractedTask, HttpLogCallback, LLMError, LLMService, ProductivityRecommendation
+from src.services.pending_suggestion_service import PendingSuggestionService
 from src.services.task_service import TaskService
 from src.utils.config import AgentConfig, Config
 from src.utils.pid_manager import get_pid_manager, PIDFileError
@@ -141,8 +142,7 @@ class AutonomousAgent:
         # Scheduler
         self._scheduler: AsyncIOScheduler | None = None
 
-        # Pending suggestions (for SUGGEST mode)
-        self._pending_suggestions: list[PendingSuggestion] = []
+        # Pending recommendations (suggestions are now persisted to database)
         self._pending_recommendations: list[ProductivityRecommendation] = []
 
         # PID manager for process tracking
@@ -515,6 +515,32 @@ class AutonomousAgent:
                                 created_task_ids.append(task_id)
                         else:
                             # Create enhanced suggestion with full context
+                            # Save suggestion to database for persistence across processes
+                            with get_db_session() as suggestion_db:
+                                suggestion_service = PendingSuggestionService(suggestion_db)
+                                db_suggestion = suggestion_service.create_suggestion(
+                                    title=task.title,
+                                    description=task.description,
+                                    priority=task.priority,
+                                    due_date=task.due_date,
+                                    tags=task.tags,
+                                    confidence=task.confidence,
+                                    source=source,
+                                    source_reference=item.source_reference,
+                                    source_url=self._generate_source_url(
+                                        source, item.source_reference, item.metadata
+                                    ),
+                                    reasoning=self._build_suggestion_reasoning(task, item, source),
+                                    original_title=item.title,
+                                    original_sender=item.metadata.get("sender") if item.metadata else None,
+                                    original_snippet=(
+                                        item.description[:200] + "..."
+                                        if item.description and len(item.description) > 200
+                                        else item.description
+                                    ),
+                                )
+                            
+                            # Create dataclass for return value
                             suggestion = PendingSuggestion(
                                 title=task.title,
                                 description=task.description,
@@ -537,7 +563,6 @@ class AutonomousAgent:
                                 ),
                             )
                             suggested_tasks.append(suggestion)
-                            self._pending_suggestions.append(suggestion)
 
             except LLMError as e:
                 logger.error(f"LLM extraction failed: {e}")
@@ -915,7 +940,7 @@ class AutonomousAgent:
                 "items_processed": self.state.items_processed_session,
                 "errors": self.state.errors_session,
             },
-            "pending_suggestions": len(self._pending_suggestions),
+            "pending_suggestions": self._get_pending_suggestion_count(),
             "pending_recommendations": len(self._pending_recommendations),
             "integrations": {
                 itype.value: self.integration_manager.is_enabled(itype)
@@ -923,17 +948,76 @@ class AutonomousAgent:
             },
         }
 
+    def _get_pending_suggestion_count(self) -> int:
+        """Get count of pending suggestions from database.
+
+        Returns:
+            Number of pending suggestions
+        """
+        try:
+            with get_db_session() as db:
+                suggestion_service = PendingSuggestionService(db)
+                return suggestion_service.get_pending_count()
+        except Exception as e:
+            logger.warning(f"Failed to get pending suggestion count: {e}")
+            return 0
+
+    def _model_to_suggestion(self, model: Any) -> PendingSuggestion:
+        """Convert a database model to a PendingSuggestion dataclass.
+
+        Args:
+            model: PendingSuggestionModel instance
+
+        Returns:
+            PendingSuggestion dataclass
+        """
+        # Convert source string back to IntegrationType if present
+        source = None
+        if model.source:
+            try:
+                source = IntegrationType(model.source)
+            except ValueError:
+                pass
+
+        return PendingSuggestion(
+            title=model.title,
+            description=model.description,
+            priority=model.priority,
+            due_date=model.due_date,
+            tags=model.get_tags_list(),
+            confidence=model.confidence,
+            source=source,
+            source_reference=model.source_reference,
+            source_url=model.source_url,
+            reasoning=model.reasoning,
+            original_title=model.original_title,
+            original_sender=model.original_sender,
+            original_snippet=model.original_snippet,
+        )
+
     def get_pending_suggestions(self) -> list[PendingSuggestion]:
-        """Get pending task suggestions.
+        """Get pending task suggestions from database.
 
         Returns:
             List of suggested tasks not yet created
         """
-        return self._pending_suggestions.copy()
+        try:
+            with get_db_session() as db:
+                suggestion_service = PendingSuggestionService(db)
+                models = suggestion_service.get_pending_suggestions()
+                return [self._model_to_suggestion(m) for m in models]
+        except Exception as e:
+            logger.error(f"Failed to get pending suggestions: {e}")
+            return []
 
     def clear_pending_suggestions(self) -> None:
-        """Clear pending task suggestions."""
-        self._pending_suggestions = []
+        """Clear pending task suggestions from database."""
+        try:
+            with get_db_session() as db:
+                suggestion_service = PendingSuggestionService(db)
+                suggestion_service.clear_pending_suggestions()
+        except Exception as e:
+            logger.error(f"Failed to clear pending suggestions: {e}")
 
     def approve_suggestion(self, index: int) -> int | None:
         """Approve a pending suggestion and create the task.
@@ -944,41 +1028,53 @@ class AutonomousAgent:
         Returns:
             Created task ID or None if failed
         """
-        if index < 0 or index >= len(self._pending_suggestions):
-            logger.warning(f"Invalid suggestion index: {index}")
-            return None
-
-        suggestion = self._pending_suggestions[index]
-
-        # Map priority
-        priority_map = {
-            "critical": TaskPriority.CRITICAL,
-            "high": TaskPriority.HIGH,
-            "medium": TaskPriority.MEDIUM,
-            "low": TaskPriority.LOW,
-        }
-        priority = priority_map.get(suggestion.priority, TaskPriority.MEDIUM)
-
-        # Map source
-        source_map = {
-            IntegrationType.GMAIL: TaskSource.EMAIL,
-            IntegrationType.SLACK: TaskSource.SLACK,
-            IntegrationType.CALENDAR: TaskSource.CALENDAR,
-            IntegrationType.DRIVE: TaskSource.MEETING_NOTES,
-        }
-        task_source = source_map.get(suggestion.source, TaskSource.AGENT) if suggestion.source else TaskSource.AGENT
-
         try:
             with get_db_session() as db:
+                suggestion_service = PendingSuggestionService(db)
+                suggestion_model = suggestion_service.get_suggestion_by_index(index)
+
+                if not suggestion_model:
+                    logger.warning(f"Invalid suggestion index: {index}")
+                    return None
+
+                suggestion_id = suggestion_model.id
+
+                # Convert source string back to IntegrationType if present
+                source_integration = None
+                if suggestion_model.source:
+                    try:
+                        source_integration = IntegrationType(suggestion_model.source)
+                    except ValueError:
+                        pass
+
+                # Map priority
+                priority_map = {
+                    "critical": TaskPriority.CRITICAL,
+                    "high": TaskPriority.HIGH,
+                    "medium": TaskPriority.MEDIUM,
+                    "low": TaskPriority.LOW,
+                }
+                priority = priority_map.get(suggestion_model.priority, TaskPriority.MEDIUM)
+
+                # Map source
+                source_map = {
+                    IntegrationType.GMAIL: TaskSource.EMAIL,
+                    IntegrationType.SLACK: TaskSource.SLACK,
+                    IntegrationType.CALENDAR: TaskSource.CALENDAR,
+                    IntegrationType.DRIVE: TaskSource.MEETING_NOTES,
+                }
+                task_source = source_map.get(source_integration, TaskSource.AGENT) if source_integration else TaskSource.AGENT
+
+                # Create the task
                 task_service = TaskService(db)
                 task = task_service.create_task(
-                    title=suggestion.title,
-                    description=suggestion.description,
+                    title=suggestion_model.title,
+                    description=suggestion_model.description,
                     priority=priority,
                     source=task_source,
-                    source_reference=suggestion.source_reference,
-                    due_date=suggestion.due_date,
-                    tags=suggestion.tags or [],
+                    source_reference=suggestion_model.source_reference,
+                    due_date=suggestion_model.due_date,
+                    tags=suggestion_model.get_tags_list() or [],
                 )
 
                 # Log task creation
@@ -986,7 +1082,7 @@ class AutonomousAgent:
                 log_service.log_task_creation(
                     task_id=task.id,
                     task_title=task.title,
-                    source=suggestion.source.value if suggestion.source else "manual",
+                    source=suggestion_model.source or "manual",
                 )
 
                 # Log the approval decision
@@ -995,17 +1091,16 @@ class AutonomousAgent:
                     reasoning="User approved the suggested task",
                     outcome="approved",
                     context={
-                        "task_title": suggestion.title[:100],
+                        "task_title": suggestion_model.title[:100],
                         "task_id": task.id,
-                        "source": suggestion.source.value if suggestion.source else None,
+                        "source": suggestion_model.source,
                     },
                 )
 
+                # Mark as approved in database
+                suggestion_service.approve_suggestion(suggestion_id, task.id)
+
                 self.state.tasks_created_session += 1
-
-                # Remove from pending list
-                self._pending_suggestions.pop(index)
-
                 return task.id
 
         except Exception as e:
@@ -1021,28 +1116,32 @@ class AutonomousAgent:
         Returns:
             True if rejected successfully
         """
-        if index < 0 or index >= len(self._pending_suggestions):
-            logger.warning(f"Invalid suggestion index: {index}")
-            return False
-
-        suggestion = self._pending_suggestions[index]
-
         try:
             with get_db_session() as db:
+                suggestion_service = PendingSuggestionService(db)
+                suggestion_model = suggestion_service.get_suggestion_by_index(index)
+
+                if not suggestion_model:
+                    logger.warning(f"Invalid suggestion index: {index}")
+                    return False
+
+                suggestion_id = suggestion_model.id
+
+                # Log the rejection decision
                 log_service = AgentLogService(db)
                 log_service.log_decision(
                     decision="reject_suggestion",
                     reasoning="User rejected the suggested task",
                     outcome="rejected",
                     context={
-                        "task_title": suggestion.title[:100],
-                        "source": suggestion.source.value if suggestion.source else None,
+                        "task_title": suggestion_model.title[:100],
+                        "source": suggestion_model.source,
                     },
                 )
 
-            # Remove from pending list
-            self._pending_suggestions.pop(index)
-            return True
+                # Mark as rejected in database
+                suggestion_service.reject_suggestion(suggestion_id)
+                return True
 
         except Exception as e:
             logger.error(f"Failed to reject suggestion: {e}")

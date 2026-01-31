@@ -201,29 +201,60 @@ class TestGetStatus:
 class TestPendingSuggestions:
     """Tests for pending suggestions management."""
 
-    def test_get_pending_suggestions_empty(self, agent):
+    def test_get_pending_suggestions_empty(self, agent, test_db_session):
         """Test getting empty suggestions."""
-        suggestions = agent.get_pending_suggestions()
+        with patch("src.agent.core.get_db_session") as mock_db:
+            mock_db.return_value.__enter__ = MagicMock(return_value=test_db_session)
+            mock_db.return_value.__exit__ = MagicMock(return_value=False)
+            
+            with patch("src.agent.core.PendingSuggestionService") as mock_service:
+                mock_service.return_value.get_pending_suggestions.return_value = []
+                suggestions = agent.get_pending_suggestions()
         assert suggestions == []
 
-    def test_clear_pending_suggestions(self, agent):
+    def test_clear_pending_suggestions(self, agent, test_db_session):
         """Test clearing suggestions."""
-        agent._pending_suggestions = [
-            PendingSuggestion(title="Test 1"),
-            PendingSuggestion(title="Test 2"),
-        ]
-        agent.clear_pending_suggestions()
-        assert len(agent._pending_suggestions) == 0
+        with patch("src.agent.core.get_db_session") as mock_db:
+            mock_db.return_value.__enter__ = MagicMock(return_value=test_db_session)
+            mock_db.return_value.__exit__ = MagicMock(return_value=False)
+            
+            with patch("src.agent.core.PendingSuggestionService") as mock_service:
+                agent.clear_pending_suggestions()
+                mock_service.return_value.clear_pending_suggestions.assert_called_once()
 
-    def test_get_pending_suggestions_returns_copy(self, agent):
+    def test_get_pending_suggestions_returns_copy(self, agent, test_db_session):
         """Test that get_pending_suggestions returns a copy."""
-        suggestion = PendingSuggestion(title="Test")
-        agent._pending_suggestions = [suggestion]
+        mock_model = MagicMock()
+        mock_model.title = "Test"
+        mock_model.description = None
+        mock_model.priority = "medium"
+        mock_model.due_date = None
+        mock_model.get_tags_list.return_value = []
+        mock_model.confidence = 0.5
+        mock_model.source = None
+        mock_model.source_reference = None
+        mock_model.source_url = None
+        mock_model.reasoning = None
+        mock_model.original_title = None
+        mock_model.original_sender = None
+        mock_model.original_snippet = None
         
-        suggestions = agent.get_pending_suggestions()
-        suggestions.append(PendingSuggestion(title="New"))
-        
-        assert len(agent._pending_suggestions) == 1
+        with patch("src.agent.core.get_db_session") as mock_db:
+            mock_db.return_value.__enter__ = MagicMock(return_value=test_db_session)
+            mock_db.return_value.__exit__ = MagicMock(return_value=False)
+            
+            with patch("src.agent.core.PendingSuggestionService") as mock_service:
+                mock_service.return_value.get_pending_suggestions.return_value = [mock_model]
+                
+                suggestions = agent.get_pending_suggestions()
+                suggestions.append(PendingSuggestion(title="New"))
+                
+                # The database still has 1 suggestion (the modification to local list doesn't affect db)
+                assert len(suggestions) == 2  # Our local list has 2
+                # Re-fetch should return 1 again
+                mock_service.return_value.get_pending_suggestions.return_value = [mock_model]
+                fresh = agent.get_pending_suggestions()
+                assert len(fresh) == 1
 
 
 class TestPendingSuggestionDataclass:
@@ -343,49 +374,57 @@ class TestSuggestionApproval:
 
     def test_approve_suggestion_success(self, agent, test_db_session):
         """Test successful suggestion approval creates task."""
-        suggestion = PendingSuggestion(
-            title="Test Task",
-            description="Test description",
-            priority="high",
-            source=IntegrationType.GMAIL,
-            source_reference="msg_123",
-        )
-        agent._pending_suggestions = [suggestion]
+        # Create a mock suggestion model from database
+        mock_suggestion = MagicMock()
+        mock_suggestion.id = 1
+        mock_suggestion.title = "Test Task"
+        mock_suggestion.description = "Test description"
+        mock_suggestion.priority = "high"
+        mock_suggestion.source = "gmail"
+        mock_suggestion.source_reference = "msg_123"
+        mock_suggestion.due_date = None
+        mock_suggestion.get_tags_list.return_value = []
 
         with patch("src.agent.core.get_db_session") as mock_db:
             mock_db.return_value.__enter__ = MagicMock(return_value=test_db_session)
             mock_db.return_value.__exit__ = MagicMock(return_value=False)
 
-            with patch("src.agent.core.TaskService") as mock_task_service:
-                mock_task = MagicMock()
-                mock_task.id = 42
-                mock_task.title = "Test Task"
-                mock_task_service.return_value.create_task.return_value = mock_task
+            with patch("src.agent.core.PendingSuggestionService") as mock_suggestion_service:
+                mock_suggestion_service.return_value.get_suggestion_by_index.return_value = mock_suggestion
+                mock_suggestion_service.return_value.approve_suggestion.return_value = True
 
-                with patch("src.agent.core.AgentLogService"):
-                    task_id = agent.approve_suggestion(0)
+                with patch("src.agent.core.TaskService") as mock_task_service:
+                    mock_task = MagicMock()
+                    mock_task.id = 42
+                    mock_task.title = "Test Task"
+                    mock_task_service.return_value.create_task.return_value = mock_task
+
+                    with patch("src.agent.core.AgentLogService"):
+                        task_id = agent.approve_suggestion(0)
 
         assert task_id == 42
-        assert len(agent._pending_suggestions) == 0
         assert agent.state.tasks_created_session == 1
 
     def test_reject_suggestion_success(self, agent, test_db_session):
         """Test successful suggestion rejection removes it."""
-        suggestion = PendingSuggestion(
-            title="Test Task",
-            source=IntegrationType.GMAIL,
-        )
-        agent._pending_suggestions = [suggestion]
+        # Create a mock suggestion model from database
+        mock_suggestion = MagicMock()
+        mock_suggestion.id = 1
+        mock_suggestion.title = "Test Task"
+        mock_suggestion.source = "gmail"
 
         with patch("src.agent.core.get_db_session") as mock_db:
             mock_db.return_value.__enter__ = MagicMock(return_value=test_db_session)
             mock_db.return_value.__exit__ = MagicMock(return_value=False)
 
-            with patch("src.agent.core.AgentLogService"):
-                result = agent.reject_suggestion(0)
+            with patch("src.agent.core.PendingSuggestionService") as mock_suggestion_service:
+                mock_suggestion_service.return_value.get_suggestion_by_index.return_value = mock_suggestion
+                mock_suggestion_service.return_value.reject_suggestion.return_value = True
+
+                with patch("src.agent.core.AgentLogService"):
+                    result = agent.reject_suggestion(0)
 
         assert result is True
-        assert len(agent._pending_suggestions) == 0
 
 
 class TestBuildSuggestionReasoning:
@@ -473,11 +512,17 @@ class TestProcessActionableItems:
                 mock_db.return_value.__enter__ = MagicMock(return_value=test_db_session)
                 mock_db.return_value.__exit__ = MagicMock(return_value=False)
                 
-                created, suggested = await agent._process_actionable_items(items, IntegrationType.GMAIL)
+                with patch("src.agent.core.PendingSuggestionService") as mock_suggestion_service:
+                    mock_db_suggestion = MagicMock()
+                    mock_db_suggestion.id = 1
+                    mock_suggestion_service.return_value.create_suggestion.return_value = mock_db_suggestion
+                    
+                    created, suggested = await agent._process_actionable_items(items, IntegrationType.GMAIL)
         
         assert len(created) == 0
         assert len(suggested) == 1
-        assert len(agent._pending_suggestions) == 1
+        # Verify create_suggestion was called
+        mock_suggestion_service.return_value.create_suggestion.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_process_items_auto_mode_creates_tasks(self, agent, test_db_session):

@@ -28,6 +28,7 @@ class DatabaseConfig(BaseModel):
 class GoogleConfig(BaseModel):
     """Google API configuration for Gmail, Calendar, and Drive."""
 
+    enabled: bool = Field(default=False, description="Enable Google integrations")
     credentials_path: str = Field(default="credentials.json", description="Path to OAuth credentials file")
     token_path: str = Field(default="token.json", description="Path to store OAuth token")
     scopes: list[str] = Field(
@@ -42,6 +43,7 @@ class GoogleConfig(BaseModel):
 class SlackConfig(BaseModel):
     """Slack API configuration."""
 
+    enabled: bool = Field(default=False, description="Enable Slack integration")
     bot_token: str = Field(default="", description="Slack bot token")
     app_token: str = Field(default="", description="Slack app token for socket mode")
     channels: list[str] = Field(default=[], description="Channels to monitor")

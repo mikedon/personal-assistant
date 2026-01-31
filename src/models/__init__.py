@@ -3,6 +3,7 @@
 from src.models.agent_log import AgentAction, AgentLog, LogLevel
 from src.models.database import Base, get_db, get_db_session, init_db
 from src.models.notification import Notification, NotificationType
+from src.models.pending_suggestion import PendingSuggestionModel, SuggestionStatus
 from src.models.task import Task, TaskPriority, TaskSource, TaskStatus
 
 __all__ = [
@@ -12,6 +13,8 @@ __all__ = [
     "LogLevel",
     "Notification",
     "NotificationType",
+    "PendingSuggestionModel",
+    "SuggestionStatus",
     "Task",
     "TaskPriority",
     "TaskSource",

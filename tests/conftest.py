@@ -29,7 +29,7 @@ def test_db_engine():
     which is required for in-memory SQLite databases.
     """
     # Import models to ensure they're registered with Base
-    from src.models import agent_log, notification, task  # noqa: F401
+    from src.models import agent_log, notification, pending_suggestion, task  # noqa: F401
 
     engine = create_engine(
         "sqlite:///:memory:",
