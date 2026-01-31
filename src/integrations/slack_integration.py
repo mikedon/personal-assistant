@@ -1,5 +1,6 @@
 """Slack integration for monitoring channels and extracting actionable items."""
 
+import time
 from datetime import datetime, timedelta
 from typing import Any
 
@@ -49,13 +50,28 @@ class SlackIntegration(BaseIntegration):
         Raises:
             AuthenticationError: If authentication fails.
         """
+        start_time = time.time()
         try:
             bot_token = self.oauth_manager.get_bot_token()
             self.client = WebClient(token=bot_token)
             # Test the authentication
             response = self.client.auth_test()
+            self._log_http_request(
+                method="POST",
+                url="https://slack.com/api/auth.test",
+                status_code=200 if response["ok"] else 401,
+                duration_seconds=time.time() - start_time,
+                request_type="auth_test",
+            )
             return response["ok"]
         except Exception as e:
+            self._log_http_request(
+                method="POST",
+                url="https://slack.com/api/auth.test",
+                status_code=401,
+                duration_seconds=time.time() - start_time,
+                request_type="auth_test",
+            )
             raise AuthenticationError(f"Slack authentication failed: {e}")
 
     async def poll(self) -> list[ActionableItem]:
@@ -76,10 +92,18 @@ class SlackIntegration(BaseIntegration):
 
             for channel in self.channels:
                 # Get channel history
+                history_start = time.time()
                 response = self.client.conversations_history(
                     channel=channel,
                     oldest=str(oldest_ts),
                     limit=100,
+                )
+                self._log_http_request(
+                    method="POST",
+                    url="https://slack.com/api/conversations.history",
+                    status_code=200 if response.get("ok") else 400,
+                    duration_seconds=time.time() - history_start,
+                    request_type="conversations_history",
                 )
 
                 for message in response.get("messages", []):

@@ -333,11 +333,26 @@ The priority score is calculated from five factors:
 - Activity summaries for monitoring
 - Automatic cleanup of old logs
 
+**Detailed Activity Logging** (added for transparency and debugging):
+- **File Access Logging**: All file reads/writes during poll cycles are logged with path, bytes, and purpose
+- **HTTP Request Logging**: All HTTP calls (LLM API, Gmail API, Slack API) are tracked with method, URL (sanitized), status code, duration, and request type
+- **Decision Logging**: Agent decisions (e.g., auto_create_task) are logged with reasoning, outcome, and context
+- **URL Sanitization**: Sensitive query parameters (api_key, token, secret) are automatically redacted in logs
+
+**Log Action Types**:
+- `POLL_EMAIL`, `POLL_SLACK`, `POLL_CALENDAR`, `POLL_DRIVE`: Integration polling
+- `CREATE_TASK`, `UPDATE_TASK`: Task management
+- `LLM_REQUEST`: LLM API calls with token tracking
+- `FILE_READ`, `FILE_WRITE`: File system operations
+- `HTTP_REQUEST`: External HTTP calls
+- `DECISION`: Agent decision points
+
 **Rationale**:
 - Debug agent behavior over time
 - Track LLM costs and usage patterns
 - Identify integration issues
 - Build user trust through transparency
+- Complete audit trail of all agent activity during polls
 
 ### Recommendation Service
 **Decision**: High-level service for productivity recommendations

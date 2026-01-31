@@ -22,7 +22,7 @@ from src.integrations.manager import IntegrationManager
 from src.models.database import get_db_session
 from src.models.task import TaskPriority, TaskSource
 from src.services.agent_log_service import AgentLogService
-from src.services.llm_service import ExtractedTask, LLMError, LLMService, ProductivityRecommendation
+from src.services.llm_service import ExtractedTask, HttpLogCallback, LLMError, LLMService, ProductivityRecommendation
 from src.services.task_service import TaskService
 from src.utils.config import AgentConfig, Config
 from src.utils.pid_manager import get_pid_manager, PIDFileError
@@ -93,8 +93,11 @@ class AutonomousAgent:
         self._db_session_factory = db_session_factory
 
         # Initialize components
-        self.llm_service = LLMService(config.llm)
-        self.integration_manager = IntegrationManager(config.model_dump())
+        self.llm_service = LLMService(config.llm, http_log_callback=self._create_http_log_callback())
+        self.integration_manager = IntegrationManager(
+            config.model_dump(),
+            http_log_callback=self._create_http_log_callback(),
+        )
 
         # State
         self.state = AgentState()
@@ -130,6 +133,37 @@ class AutonomousAgent:
         # Use context manager from database module
         with get_db_session() as session:
             return session
+
+    def _create_http_log_callback(self) -> HttpLogCallback:
+        """Create an HTTP logging callback function.
+
+        Returns:
+            Callback function that logs HTTP requests to the database
+        """
+        def log_http_request(
+            method: str,
+            url: str,
+            status_code: int | None,
+            duration_seconds: float | None,
+            service: str | None,
+            request_type: str | None,
+        ) -> None:
+            """Log an HTTP request to the agent log."""
+            try:
+                with get_db_session() as db:
+                    log_service = AgentLogService(db)
+                    log_service.log_http_request(
+                        method=method,
+                        url=url,
+                        status_code=status_code,
+                        duration_seconds=duration_seconds,
+                        service=service,
+                        request_type=request_type,
+                    )
+            except Exception as e:
+                logger.warning(f"Failed to log HTTP request: {e}")
+
+        return log_http_request
 
     async def start(self) -> None:
         """Start the autonomous agent.
@@ -345,14 +379,15 @@ class AutonomousAgent:
                     )
 
                 # Process each extracted task based on autonomy level
-                for task in extracted:
-                    if self._should_auto_create_task(task):
-                        task_id = await self._create_task_from_extracted(task, source, item)
-                        if task_id:
-                            created_task_ids.append(task_id)
-                    else:
-                        suggested_tasks.append(task)
-                        self._pending_suggestions.append(task)
+                with get_db_session() as decision_db:
+                    for task in extracted:
+                        if self._should_auto_create_task(task, db=decision_db):
+                            task_id = await self._create_task_from_extracted(task, source, item)
+                            if task_id:
+                                created_task_ids.append(task_id)
+                        else:
+                            suggested_tasks.append(task)
+                            self._pending_suggestions.append(task)
 
             except LLMError as e:
                 logger.error(f"LLM extraction failed: {e}")
@@ -364,21 +399,44 @@ class AutonomousAgent:
 
         return created_task_ids, suggested_tasks
 
-    def _should_auto_create_task(self, task: ExtractedTask) -> bool:
+    def _should_auto_create_task(self, task: ExtractedTask, db: Session | None = None) -> bool:
         """Determine if a task should be auto-created based on autonomy level.
 
         Args:
             task: The extracted task
+            db: Optional database session for logging
 
         Returns:
             True if task should be auto-created
         """
+        should_create = False
+        reasoning = ""
+
         if self._autonomy_level == AutonomyLevel.SUGGEST:
-            return False
+            should_create = False
+            reasoning = "Autonomy level is SUGGEST - all tasks require manual approval"
         elif self._autonomy_level == AutonomyLevel.AUTO_LOW:
-            return task.confidence >= 0.8
+            should_create = task.confidence >= 0.8
+            reasoning = f"Autonomy level is AUTO_LOW - confidence {task.confidence:.2f} {'>='}  0.8 threshold" if should_create else f"Autonomy level is AUTO_LOW - confidence {task.confidence:.2f} below 0.8 threshold"
         else:  # AUTO or FULL
-            return True
+            should_create = True
+            reasoning = f"Autonomy level is {self._autonomy_level.value} - auto-creating all extracted tasks"
+
+        # Log the decision
+        if db:
+            log_service = AgentLogService(db)
+            log_service.log_decision(
+                decision="auto_create_task",
+                reasoning=reasoning,
+                outcome="approved" if should_create else "rejected",
+                context={
+                    "task_title": task.title[:100],
+                    "confidence": task.confidence,
+                    "autonomy_level": self._autonomy_level.value,
+                },
+            )
+
+        return should_create
 
     async def _create_task_from_extracted(
         self,
@@ -596,7 +654,17 @@ class AutonomousAgent:
             recommendations: List of recommendations
         """
         try:
+            # Log directory creation if needed
+            created_dir = not output_path.parent.exists()
             output_path.parent.mkdir(parents=True, exist_ok=True)
+
+            if created_dir:
+                with get_db_session() as db:
+                    log_service = AgentLogService(db)
+                    log_service.log_file_write(
+                        file_path=str(output_path.parent),
+                        purpose="Created directory for summary document",
+                    )
 
             now = datetime.now(UTC).strftime("%Y-%m-%d %H:%M UTC")
 
@@ -661,6 +729,16 @@ class AutonomousAgent:
 """
 
             output_path.write_text(content)
+
+            # Log file write
+            with get_db_session() as db:
+                log_service = AgentLogService(db)
+                log_service.log_file_write(
+                    file_path=str(output_path),
+                    bytes_written=len(content.encode("utf-8")),
+                    purpose="Generated productivity summary document",
+                )
+
             logger.info(f"Wrote summary document to {output_path}")
 
         except Exception as e:

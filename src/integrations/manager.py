@@ -2,7 +2,7 @@
 
 import asyncio
 import logging
-from typing import Any
+from typing import Any, Callable
 
 from src.integrations.base import ActionableItem, BaseIntegration, IntegrationType
 from src.integrations.gmail_integration import GmailIntegration
@@ -12,17 +12,22 @@ from src.services.task_service import TaskService
 
 logger = logging.getLogger(__name__)
 
+# Type for HTTP logging callback
+HttpLogCallback = Callable[[str, str, int | None, float | None, str | None, str | None], None]
+
 
 class IntegrationManager:
     """Manages all external service integrations."""
 
-    def __init__(self, config: dict[str, Any]):
+    def __init__(self, config: dict[str, Any], http_log_callback: HttpLogCallback | None = None):
         """Initialize integration manager.
 
         Args:
             config: Configuration dict with settings for all integrations
+            http_log_callback: Optional callback for logging HTTP requests
         """
         self.config = config
+        self._http_log_callback = http_log_callback
         self.integrations: dict[IntegrationType, BaseIntegration] = {}
         self._initialize_integrations()
 
@@ -32,7 +37,9 @@ class IntegrationManager:
         gmail_config = self.config.get("google", {})
         if gmail_config.get("enabled", False):
             try:
-                self.integrations[IntegrationType.GMAIL] = GmailIntegration(gmail_config)
+                integration = GmailIntegration(gmail_config)
+                integration.set_http_log_callback(self._http_log_callback)
+                self.integrations[IntegrationType.GMAIL] = integration
                 logger.info("Gmail integration initialized")
             except Exception as e:
                 logger.error(f"Failed to initialize Gmail integration: {e}")
@@ -41,7 +48,9 @@ class IntegrationManager:
         slack_config = self.config.get("slack", {})
         if slack_config.get("enabled", False):
             try:
-                self.integrations[IntegrationType.SLACK] = SlackIntegration(slack_config)
+                integration = SlackIntegration(slack_config)
+                integration.set_http_log_callback(self._http_log_callback)
+                self.integrations[IntegrationType.SLACK] = integration
                 logger.info("Slack integration initialized")
             except Exception as e:
                 logger.error(f"Failed to initialize Slack integration: {e}")

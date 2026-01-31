@@ -180,6 +180,169 @@ class AgentLogService:
             },
         )
 
+    def log_file_read(
+        self,
+        file_path: str,
+        bytes_read: int | None = None,
+        purpose: str | None = None,
+    ) -> AgentLog:
+        """Log a file read operation.
+
+        Args:
+            file_path: Path to the file being read
+            bytes_read: Number of bytes read (if known)
+            purpose: Why the file is being read
+
+        Returns:
+            The created AgentLog entry
+        """
+        return self.log(
+            f"Read file: {file_path}",
+            level=LogLevel.DEBUG,
+            action=AgentAction.FILE_READ,
+            details={
+                "file_path": file_path,
+                "bytes_read": bytes_read,
+                "purpose": purpose,
+            },
+        )
+
+    def log_file_write(
+        self,
+        file_path: str,
+        bytes_written: int | None = None,
+        purpose: str | None = None,
+    ) -> AgentLog:
+        """Log a file write operation.
+
+        Args:
+            file_path: Path to the file being written
+            bytes_written: Number of bytes written (if known)
+            purpose: Why the file is being written
+
+        Returns:
+            The created AgentLog entry
+        """
+        return self.log(
+            f"Wrote file: {file_path}",
+            level=LogLevel.DEBUG,
+            action=AgentAction.FILE_WRITE,
+            details={
+                "file_path": file_path,
+                "bytes_written": bytes_written,
+                "purpose": purpose,
+            },
+        )
+
+    def log_http_request(
+        self,
+        method: str,
+        url: str,
+        status_code: int | None = None,
+        duration_seconds: float | None = None,
+        service: str | None = None,
+        request_type: str | None = None,
+    ) -> AgentLog:
+        """Log an HTTP request.
+
+        Args:
+            method: HTTP method (GET, POST, etc.)
+            url: Request URL (may be sanitized)
+            status_code: Response status code
+            duration_seconds: Request duration
+            service: Service name (e.g., 'openai', 'gmail', 'slack')
+            request_type: Type of request (e.g., 'llm_completion', 'fetch_emails')
+
+        Returns:
+            The created AgentLog entry
+        """
+        # Sanitize URL to avoid logging sensitive data
+        sanitized_url = self._sanitize_url(url)
+
+        status_str = f" -> {status_code}" if status_code else ""
+        duration_str = f" ({duration_seconds:.2f}s)" if duration_seconds else ""
+
+        return self.log(
+            f"HTTP {method} {sanitized_url}{status_str}{duration_str}",
+            level=LogLevel.DEBUG,
+            action=AgentAction.HTTP_REQUEST,
+            details={
+                "method": method,
+                "url": sanitized_url,
+                "status_code": status_code,
+                "duration_seconds": round(duration_seconds, 3) if duration_seconds else None,
+                "service": service,
+                "request_type": request_type,
+            },
+        )
+
+    def log_decision(
+        self,
+        decision: str,
+        reasoning: str,
+        outcome: str,
+        context: dict[str, Any] | None = None,
+    ) -> AgentLog:
+        """Log an agent decision.
+
+        Args:
+            decision: The decision being made (e.g., 'auto_create_task')
+            reasoning: Why this decision was made
+            outcome: The result of the decision (e.g., 'approved', 'rejected')
+            context: Additional context about the decision
+
+        Returns:
+            The created AgentLog entry
+        """
+        return self.log(
+            f"Decision: {decision} -> {outcome}",
+            level=LogLevel.INFO,
+            action=AgentAction.DECISION,
+            details={
+                "decision": decision,
+                "reasoning": reasoning,
+                "outcome": outcome,
+                "context": context,
+            },
+        )
+
+    def _sanitize_url(self, url: str) -> str:
+        """Sanitize a URL to remove sensitive query parameters.
+
+        Args:
+            url: The URL to sanitize
+
+        Returns:
+            Sanitized URL with sensitive params redacted
+        """
+        from urllib.parse import parse_qs, urlencode, urlparse, urlunparse
+
+        sensitive_params = {"api_key", "apikey", "key", "token", "secret", "password", "auth"}
+
+        try:
+            parsed = urlparse(url)
+            query_params = parse_qs(parsed.query)
+
+            # Redact sensitive parameters
+            for param in query_params:
+                if param.lower() in sensitive_params:
+                    query_params[param] = ["[REDACTED]"]
+
+            # Reconstruct URL
+            sanitized_query = urlencode(query_params, doseq=True)
+            sanitized = urlunparse((
+                parsed.scheme,
+                parsed.netloc,
+                parsed.path,
+                parsed.params,
+                sanitized_query,
+                "",  # Remove fragment
+            ))
+            return sanitized
+        except Exception:
+            # If parsing fails, return a truncated version
+            return url[:100] + "..." if len(url) > 100 else url
+
     def get_logs(
         self,
         *,

@@ -5,14 +5,18 @@ Uses litellm for OpenAI API-compatible calls, supporting any provider.
 
 import json
 import logging
+import time
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Any
+from typing import Any, Callable
 
 import litellm
 from litellm import acompletion
 
 from src.utils.config import LLMConfig
+
+# Type for HTTP logging callback
+HttpLogCallback = Callable[[str, str, int | None, float | None, str | None, str | None], None]
 
 logger = logging.getLogger(__name__)
 
@@ -64,14 +68,25 @@ class ProductivityRecommendation:
 class LLMService:
     """Service for LLM-powered task extraction and recommendations."""
 
-    def __init__(self, config: LLMConfig):
+    def __init__(self, config: LLMConfig, http_log_callback: HttpLogCallback | None = None):
         """Initialize the LLM service.
 
         Args:
             config: LLM configuration with API key, model, etc.
+            http_log_callback: Optional callback for logging HTTP requests.
+                Signature: (method, url, status_code, duration, service, request_type) -> None
         """
         self.config = config
+        self._http_log_callback = http_log_callback
         self._configure_litellm()
+
+    def set_http_log_callback(self, callback: HttpLogCallback | None) -> None:
+        """Set the HTTP logging callback.
+
+        Args:
+            callback: Callback function for logging HTTP requests
+        """
+        self._http_log_callback = callback
 
     def _configure_litellm(self) -> None:
         """Configure litellm with API settings."""
@@ -87,6 +102,7 @@ class LLMService:
         messages: list[dict[str, str]],
         temperature: float | None = None,
         max_tokens: int | None = None,
+        request_type: str = "completion",
     ) -> LLMResponse:
         """Make an async LLM call.
 
@@ -94,6 +110,7 @@ class LLMService:
             messages: List of message dicts with 'role' and 'content'
             temperature: Override default temperature
             max_tokens: Override default max tokens
+            request_type: Type of request for logging (e.g., 'task_extraction', 'recommendations')
 
         Returns:
             LLMResponse with content and metadata
@@ -101,6 +118,14 @@ class LLMService:
         Raises:
             LLMError: If the API call fails
         """
+        start_time = time.time()
+        status_code = None
+
+        # Determine the API URL being called
+        api_url = self.config.base_url or "https://api.openai.com/v1"
+        if not api_url.endswith("/chat/completions"):
+            api_url = f"{api_url.rstrip('/')}/chat/completions"
+
         try:
             response = await acompletion(
                 model=self.config.model,
@@ -112,6 +137,20 @@ class LLMService:
 
             content = response.choices[0].message.content or ""
             tokens_used = response.usage.total_tokens if response.usage else 0
+            status_code = 200  # Successful completion
+
+            duration = time.time() - start_time
+
+            # Log HTTP request if callback is set
+            if self._http_log_callback:
+                self._http_log_callback(
+                    "POST",
+                    api_url,
+                    status_code,
+                    duration,
+                    "llm",
+                    request_type,
+                )
 
             return LLMResponse(
                 content=content,
@@ -121,6 +160,24 @@ class LLMService:
             )
 
         except Exception as e:
+            duration = time.time() - start_time
+            # Try to extract status code from exception if available
+            if hasattr(e, "status_code"):
+                status_code = e.status_code
+            else:
+                status_code = 500  # Default to 500 for unknown errors
+
+            # Log failed HTTP request if callback is set
+            if self._http_log_callback:
+                self._http_log_callback(
+                    "POST",
+                    api_url,
+                    status_code,
+                    duration,
+                    "llm",
+                    request_type,
+                )
+
             logger.error(f"LLM call failed: {e}")
             raise LLMError(f"LLM call failed: {e}") from e
 
@@ -184,6 +241,7 @@ Extract all actionable tasks as JSON:"""
                     {"role": "user", "content": user_prompt},
                 ],
                 temperature=0.3,  # Lower temperature for more consistent extraction
+                request_type="task_extraction",
             )
 
             # Parse JSON response
@@ -274,6 +332,7 @@ Suggest priority changes as JSON:"""
                     {"role": "user", "content": user_prompt},
                 ],
                 temperature=0.3,
+                request_type="priority_suggestion",
             )
 
             suggestions_data = self._parse_json_response(response.content)
@@ -378,6 +437,7 @@ Generate productivity recommendations as JSON:"""
                     {"role": "user", "content": user_prompt},
                 ],
                 temperature=0.5,
+                request_type="recommendations",
             )
 
             recommendations_data = self._parse_json_response(response.content)
@@ -464,6 +524,7 @@ Suggest calendar optimizations as JSON:"""
                     {"role": "user", "content": user_prompt},
                 ],
                 temperature=0.5,
+                request_type="calendar_optimization",
             )
 
             recommendations_data = self._parse_json_response(response.content)

@@ -4,7 +4,10 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from datetime import datetime
 from enum import Enum
-from typing import Any
+from typing import Any, Callable
+
+# Type for HTTP logging callback
+HttpLogCallback = Callable[[str, str, int | None, float | None, str | None, str | None], None]
 
 
 class IntegrationType(str, Enum):
@@ -53,6 +56,42 @@ class BaseIntegration(ABC):
         self.config = config
         self.enabled = config.get("enabled", True)
         self._last_poll: datetime | None = None
+        self._http_log_callback: HttpLogCallback | None = None
+
+    def set_http_log_callback(self, callback: HttpLogCallback | None) -> None:
+        """Set the HTTP logging callback.
+
+        Args:
+            callback: Callback function for logging HTTP requests
+        """
+        self._http_log_callback = callback
+
+    def _log_http_request(
+        self,
+        method: str,
+        url: str,
+        status_code: int | None = None,
+        duration_seconds: float | None = None,
+        request_type: str | None = None,
+    ) -> None:
+        """Log an HTTP request using the configured callback.
+
+        Args:
+            method: HTTP method (GET, POST, etc.)
+            url: Request URL
+            status_code: Response status code
+            duration_seconds: Request duration
+            request_type: Type of request
+        """
+        if self._http_log_callback:
+            self._http_log_callback(
+                method,
+                url,
+                status_code,
+                duration_seconds,
+                self.integration_type.value,
+                request_type,
+            )
 
     @property
     @abstractmethod

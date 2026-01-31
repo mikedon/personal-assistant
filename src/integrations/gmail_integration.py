@@ -1,6 +1,7 @@
 """Gmail integration for reading and extracting actionable items from emails."""
 
 import base64
+import time
 from datetime import datetime, timedelta
 from email.utils import parsedate_to_datetime
 from typing import Any
@@ -54,11 +55,28 @@ class GmailIntegration(BaseIntegration):
         Raises:
             AuthenticationError: If authentication fails.
         """
+        start_time = time.time()
         try:
             creds = self.oauth_manager.get_credentials()
             self.service = build("gmail", "v1", credentials=creds)
+
+            # Log authentication HTTP call
+            self._log_http_request(
+                method="POST",
+                url="https://oauth2.googleapis.com/token",
+                status_code=200,
+                duration_seconds=time.time() - start_time,
+                request_type="oauth_token_refresh",
+            )
             return True
         except Exception as e:
+            self._log_http_request(
+                method="POST",
+                url="https://oauth2.googleapis.com/token",
+                status_code=401,
+                duration_seconds=time.time() - start_time,
+                request_type="oauth_token_refresh",
+            )
             raise AuthenticationError(f"Gmail authentication failed: {e}")
 
     async def poll(self) -> list[ActionableItem]:
@@ -81,22 +99,38 @@ class GmailIntegration(BaseIntegration):
             query = f"is:unread after:{lookback_time.strftime('%Y/%m/%d')}"
 
             # Get list of unread messages
+            list_start = time.time()
             results = (
                 self.service.users()
                 .messages()
                 .list(userId="me", q=query, maxResults=self.max_results)
                 .execute()
             )
+            self._log_http_request(
+                method="GET",
+                url="https://gmail.googleapis.com/gmail/v1/users/me/messages",
+                status_code=200,
+                duration_seconds=time.time() - list_start,
+                request_type="list_messages",
+            )
 
             messages = results.get("messages", [])
 
             for msg in messages:
                 # Get full message details
+                get_start = time.time()
                 message = (
                     self.service.users()
                     .messages()
                     .get(userId="me", id=msg["id"], format="full")
                     .execute()
+                )
+                self._log_http_request(
+                    method="GET",
+                    url=f"https://gmail.googleapis.com/gmail/v1/users/me/messages/{msg['id']}",
+                    status_code=200,
+                    duration_seconds=time.time() - get_start,
+                    request_type="get_message",
                 )
 
                 item = self._extract_actionable_item(message)

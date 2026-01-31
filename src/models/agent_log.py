@@ -32,6 +32,11 @@ class AgentAction(str, enum.Enum):
     LLM_REQUEST = "llm_request"
     SCHEDULE_MEETING = "schedule_meeting"
     CALENDAR_OPTIMIZATION = "calendar_optimization"
+    # Detailed activity logging
+    FILE_READ = "file_read"
+    FILE_WRITE = "file_write"
+    HTTP_REQUEST = "http_request"
+    DECISION = "decision"
 
 
 class AgentLog(Base):
