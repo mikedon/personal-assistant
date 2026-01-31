@@ -140,13 +140,19 @@ class LLMService:
         Returns:
             List of extracted tasks
         """
-        system_prompt = """You are a task extraction assistant. Analyze the given text and extract any actionable tasks or requests.
+        today = datetime.now()
+        today_str = today.strftime("%Y-%m-%d")
+        weekday = today.strftime("%A")
+
+        system_prompt = f"""You are a task extraction assistant. Analyze the given text and extract any actionable tasks or requests.
+
+Today's date is {today_str} ({weekday}). Use this to interpret relative dates correctly.
 
 For each task, determine:
 - title: A clear, concise task title (max 100 chars)
 - description: Additional context if needed
 - priority: "critical", "high", "medium", or "low" based on urgency indicators
-- due_date: If a deadline is mentioned, extract it in ISO format (YYYY-MM-DDTHH:MM:SS)
+- due_date: If a deadline is mentioned, extract it in ISO format (YYYY-MM-DDTHH:MM:SS). For relative dates like "this Sunday", "tomorrow", "next week", calculate the actual future date based on today's date.
 - tags: Relevant tags for categorization
 - confidence: Your confidence in this being a real task (0.0 to 1.0)
 
@@ -158,8 +164,10 @@ Priority guidelines:
 - medium: Normal requests without urgency indicators
 - low: "when you get a chance", "no rush", or informational items
 
+IMPORTANT: All due dates must be in the future. If someone says "this Sunday" and today is {weekday}, calculate the next upcoming Sunday.
+
 Example output:
-[{"title": "Review PR #123", "description": "Code review requested by John", "priority": "high", "due_date": "2026-01-29T17:00:00", "tags": ["code-review", "engineering"], "confidence": 0.9}]"""
+[{{"title": "Review PR #123", "description": "Code review requested by John", "priority": "high", "due_date": "2026-01-29T17:00:00", "tags": ["code-review", "engineering"], "confidence": 0.9}}]"""
 
         user_prompt = f"""Source: {source}
 {f"Context: {context}" if context else ""}
