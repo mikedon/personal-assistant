@@ -713,6 +713,103 @@ def tasks_stats():
         console.print(table)
 
 
+@tasks.command("due")
+@click.argument("task_id", type=int)
+@click.argument("date", required=False)
+@click.option("--yes", "-y", is_flag=True, help="Skip confirmation prompt")
+@click.option("--clear", "-c", is_flag=True, help="Clear the due date")
+def tasks_due(task_id, date, yes, clear):
+    """Update a task's due date.
+
+    Supports natural language dates like "tomorrow", "next Friday",
+    "end of month", or standard formats like "2026-02-15".
+
+    Examples:
+
+        pa tasks due 5 tomorrow
+
+        pa tasks due 5 "next Friday"
+
+        pa tasks due 5 --clear
+    """
+    # Validate arguments
+    if not date and not clear:
+        console.print("[red]Please provide a date or use --clear to remove the due date.[/red]")
+        return
+
+    if date and clear:
+        console.print("[red]Cannot specify both a date and --clear.[/red]")
+        return
+
+    with get_db_session() as db:
+        service = TaskService(db)
+        task = service.get_task(task_id)
+
+        if not task:
+            console.print(f"[red]Task #{task_id} not found.[/red]")
+            return
+
+        # Show current task info
+        current_due = format_due_date(task.due_date) if task.due_date else "[dim]None[/dim]"
+
+        if clear:
+            # Clear the due date
+            new_due_date = None
+            new_due_display = "[dim]None[/dim]"
+        else:
+            # Try simple parsing first
+            new_due_date = parse_due_date(date)
+
+            # If simple parsing fails, try LLM
+            if new_due_date is None:
+                config = get_config()
+
+                if not config.llm.api_key:
+                    console.print(f"[red]Could not parse date: {date}[/red]")
+                    console.print("[dim]Simple formats: 'today', 'tomorrow', '+3d', '+2w', 'YYYY-MM-DD'[/dim]")
+                    console.print("[dim]For complex dates like 'next Friday', configure an LLM API key.[/dim]")
+                    return
+
+                # Use LLM to parse complex date
+                from src.services.llm_service import LLMService, LLMError
+
+                llm_service = LLMService(config.llm)
+
+                try:
+                    with Progress(
+                        SpinnerColumn(),
+                        TextColumn("[progress.description]{task.description}"),
+                        console=console,
+                    ) as progress:
+                        progress.add_task("Parsing date...", total=None)
+                        new_due_date = run_async(llm_service.parse_date(date))
+
+                    if new_due_date is None:
+                        console.print(f"[red]Could not parse date: {date}[/red]")
+                        return
+
+                except LLMError as e:
+                    console.print(f"[red]LLM error: {e}[/red]")
+                    return
+
+            new_due_display = format_due_date(new_due_date)
+
+        # Show change summary
+        console.print(f"\n[bold]Task #{task_id}:[/bold] {task.title}")
+        console.print(f"  Current due: {current_due}")
+        console.print(f"  New due:     {new_due_display}")
+
+        # Confirm unless --yes
+        if not yes:
+            if not click.confirm("\nUpdate due date?", default=True):
+                console.print("[dim]Cancelled.[/dim]")
+                return
+
+        # Update the task
+        service.update_task(task, due_date=new_due_date)
+        console.print(f"[green]✓[/green] Updated due date for task #{task_id}")
+
+
 @tasks.command("voice")
 @click.option("--duration", "-d", default=10, type=int, help="Recording duration in seconds (1-60)")
 @click.option("--transcribe-only", "-t", is_flag=True, help="Only transcribe, don't create a task")
@@ -855,6 +952,148 @@ def tasks_voice(duration, transcribe_only):
         console.print("[dim]Check your API key and try again.[/dim]")
     except VoiceError as e:
         console.print(f"[red]Voice error: {e}[/red]")
+    except Exception as e:
+        console.print(f"[red]Unexpected error: {e}[/red]")
+
+
+@tasks.command("parse")
+@click.argument("text")
+@click.option("--dry-run", "-n", is_flag=True, help="Show what would be created without creating")
+@click.option("--yes", "-y", is_flag=True, help="Skip confirmation prompt")
+def tasks_parse(text, dry_run, yes):
+    """Create a task from natural language text.
+
+    Uses AI to parse the text and extract task details including
+    title, priority, due date, and tags.
+
+    Examples:
+
+        pa tasks parse "call John tomorrow about the project"
+
+        pa tasks parse "urgent: fix production bug ASAP" --yes
+
+        pa tasks parse "send report by Friday" --dry-run
+    """
+    from src.services.llm_service import LLMService, LLMError
+
+    config = get_config()
+
+    # Check if LLM is configured
+    if not config.llm.api_key:
+        console.print("[red]LLM API key not configured.[/red]")
+        console.print("[dim]Set llm.api_key in config.yaml or PA_LLM__API_KEY env var.[/dim]")
+        return
+
+    # Initialize LLM service
+    llm_service = LLMService(config.llm)
+
+    try:
+        with Progress(
+            SpinnerColumn(),
+            TextColumn("[progress.description]{task.description}"),
+            console=console,
+        ) as progress:
+            task = progress.add_task("Analyzing text...", total=None)
+
+            # Extract tasks from text
+            extracted_tasks = run_async(
+                llm_service.extract_tasks_from_text(
+                    text=text,
+                    source="cli",
+                    context="User entered this text via command line to create a task.",
+                )
+            )
+
+        if not extracted_tasks:
+            console.print("[yellow]No tasks could be extracted from the text.[/yellow]")
+            if not dry_run:
+                # Offer to create a simple task
+                if yes or click.confirm("Create a simple task with this text as the title?"):
+                    with get_db_session() as db:
+                        service = TaskService(db)
+                        task = service.create_task(
+                            title=text[:200],
+                            description=None,
+                            priority=TaskPriority.MEDIUM,
+                            source=TaskSource.MANUAL,
+                        )
+                        console.print(f"[green]✓[/green] Created task #{task.id}: {task.title}")
+            return
+
+        # Process each extracted task
+        created_count = 0
+        for i, extracted in enumerate(extracted_tasks, 1):
+            # Display extracted task details
+            pri_emoji = {"critical": "🔴", "high": "🟠", "medium": "🟡", "low": "🟢"}.get(
+                extracted.priority, "⚪"
+            )
+            pri_style = {"critical": "bold red", "high": "red", "medium": "yellow", "low": "green"}.get(
+                extracted.priority, "white"
+            )
+
+            lines = [
+                f"[bold]{pri_emoji} {extracted.title}[/bold]",
+                "",
+                f"[{pri_style}]Priority: {extracted.priority.upper()}[/{pri_style}]   "
+                f"Confidence: {extracted.confidence:.0%}",
+            ]
+
+            if extracted.description:
+                lines.append(f"[dim]Description:[/dim] {extracted.description[:150]}{'...' if len(extracted.description or '') > 150 else ''}")
+
+            if extracted.due_date:
+                lines.append(f"[cyan]Due:[/cyan] {format_due_date(extracted.due_date)}")
+
+            if extracted.tags:
+                tags_str = ", ".join(f"#{t}" for t in extracted.tags)
+                lines.append(f"[dim]Tags:[/dim] {tags_str}")
+
+            title = "Extracted Task" if len(extracted_tasks) == 1 else f"Extracted Task {i}/{len(extracted_tasks)}"
+            console.print(Panel("\n".join(lines), title=title, border_style="cyan"))
+
+            if dry_run:
+                console.print("[dim]Dry run - task not created.[/dim]")
+                continue
+
+            # Confirm creation (unless --yes)
+            if not yes and len(extracted_tasks) > 1:
+                action = click.prompt(
+                    "Create this task?",
+                    type=click.Choice(["y", "n", "q"], case_sensitive=False),
+                    default="y",
+                    show_choices=True,
+                )
+                if action == "q":
+                    console.print("[dim]Stopped.[/dim]")
+                    break
+                if action == "n":
+                    console.print("[dim]Skipped.[/dim]")
+                    continue
+            elif not yes:
+                if not click.confirm("Create this task?", default=True):
+                    console.print("[dim]Task not created.[/dim]")
+                    continue
+
+            # Create the task
+            with get_db_session() as db:
+                service = TaskService(db)
+                task = service.create_task(
+                    title=extracted.title,
+                    description=extracted.description,
+                    priority=TaskPriority(extracted.priority),
+                    source=TaskSource.MANUAL,
+                    due_date=extracted.due_date,
+                    tags=extracted.tags,
+                )
+                console.print(f"[green]✓[/green] Created task #{task.id}: {task.title}")
+                created_count += 1
+
+        if len(extracted_tasks) > 1 and not dry_run:
+            console.print(f"\n[bold]Created {created_count} of {len(extracted_tasks)} task(s).[/bold]")
+
+    except LLMError as e:
+        console.print(f"[red]LLM error: {e}[/red]")
+        console.print("[dim]Check your API key and try again.[/dim]")
     except Exception as e:
         console.print(f"[red]Unexpected error: {e}[/red]")
 

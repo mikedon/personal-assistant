@@ -1,7 +1,7 @@
 """Unit tests for CLI commands."""
 
 from datetime import datetime, timedelta
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from click.testing import CliRunner
@@ -609,3 +609,372 @@ class TestNotifyCommand:
         
         assert result.exit_code == 0
         assert "disabled" in result.output or "not sent" in result.output
+
+
+class TestTasksParseCommand:
+    """Tests for tasks parse command."""
+
+    @patch("src.cli.init_db")
+    @patch("src.cli.load_config")
+    @patch("src.cli.get_config")
+    @patch("src.cli.get_db_session")
+    def test_tasks_parse_creates_task(self, mock_session, mock_get_config, mock_load_config, mock_init_db, runner, mock_config, mock_task):
+        """Test tasks parse creates task from extracted data."""
+        mock_load_config.return_value = mock_config
+        mock_get_config.return_value = mock_config
+
+        mock_db = MagicMock()
+        mock_session.return_value.__enter__ = MagicMock(return_value=mock_db)
+        mock_session.return_value.__exit__ = MagicMock(return_value=False)
+
+        # Create mock extracted task
+        from src.services.llm_service import ExtractedTask
+        from datetime import datetime, timedelta
+
+        extracted = ExtractedTask(
+            title="Call John about quarterly review",
+            description="Discuss Q4 results",
+            priority="high",
+            due_date=datetime.now() + timedelta(days=1),
+            tags=["call", "work"],
+            confidence=0.9,
+        )
+
+        with patch("src.cli.TaskService") as mock_service_class, \
+             patch("src.services.llm_service.LLMService") as mock_llm_class:
+            mock_service = MagicMock()
+            mock_service.create_task.return_value = mock_task
+            mock_service_class.return_value = mock_service
+
+            # Mock LLM to return extracted task (async method)
+            mock_llm = MagicMock()
+            mock_llm.extract_tasks_from_text = AsyncMock(return_value=[extracted])
+            mock_llm_class.return_value = mock_llm
+
+            # Use --yes to skip confirmation
+            result = runner.invoke(cli, [
+                "tasks", "parse",
+                "call John tomorrow about quarterly review, high priority",
+                "--yes"
+            ])
+
+            assert result.exit_code == 0
+            assert "Created task" in result.output
+            mock_service.create_task.assert_called_once()
+
+    @patch("src.cli.init_db")
+    @patch("src.cli.load_config")
+    @patch("src.cli.get_config")
+    def test_tasks_parse_dry_run(self, mock_get_config, mock_load_config, mock_init_db, runner, mock_config):
+        """Test tasks parse with --dry-run shows task but doesn't create."""
+        mock_load_config.return_value = mock_config
+        mock_get_config.return_value = mock_config
+
+        from src.services.llm_service import ExtractedTask
+
+        extracted = ExtractedTask(
+            title="Send report by Friday",
+            priority="medium",
+            confidence=0.85,
+        )
+
+        with patch("src.services.llm_service.LLMService") as mock_llm_class:
+            mock_llm = MagicMock()
+            mock_llm.extract_tasks_from_text = AsyncMock(return_value=[extracted])
+            mock_llm_class.return_value = mock_llm
+
+            result = runner.invoke(cli, [
+                "tasks", "parse",
+                "send report by Friday",
+                "--dry-run"
+            ])
+
+            assert result.exit_code == 0
+            assert "Send report by Friday" in result.output
+            assert "Dry run" in result.output
+
+    @patch("src.cli.init_db")
+    @patch("src.cli.load_config")
+    @patch("src.cli.get_config")
+    @patch("src.cli.get_db_session")
+    def test_tasks_parse_no_extraction_creates_simple_task(self, mock_session, mock_get_config, mock_load_config, mock_init_db, runner, mock_config, mock_task):
+        """Test tasks parse creates simple task when LLM extracts nothing."""
+        mock_load_config.return_value = mock_config
+        mock_get_config.return_value = mock_config
+
+        mock_db = MagicMock()
+        mock_session.return_value.__enter__ = MagicMock(return_value=mock_db)
+        mock_session.return_value.__exit__ = MagicMock(return_value=False)
+
+        with patch("src.cli.TaskService") as mock_service_class, \
+             patch("src.services.llm_service.LLMService") as mock_llm_class:
+            mock_service = MagicMock()
+            mock_service.create_task.return_value = mock_task
+            mock_service_class.return_value = mock_service
+
+            # Mock LLM to return empty list (async method)
+            mock_llm = MagicMock()
+            mock_llm.extract_tasks_from_text = AsyncMock(return_value=[])
+            mock_llm_class.return_value = mock_llm
+
+            # Use --yes to auto-confirm simple task creation
+            result = runner.invoke(cli, [
+                "tasks", "parse",
+                "some text that fails parsing",
+                "--yes"
+            ])
+
+            assert result.exit_code == 0
+            assert "No tasks could be extracted" in result.output
+            assert "Created task" in result.output
+
+    @patch("src.cli.init_db")
+    @patch("src.cli.load_config")
+    @patch("src.cli.get_config")
+    def test_tasks_parse_no_api_key(self, mock_get_config, mock_load_config, mock_init_db, runner):
+        """Test tasks parse shows error when API key not configured."""
+        mock_config = MagicMock()
+        mock_config.llm.api_key = ""  # No API key
+        mock_load_config.return_value = mock_config
+        mock_get_config.return_value = mock_config
+
+        result = runner.invoke(cli, ["tasks", "parse", "some task"])
+
+        assert result.exit_code == 0
+        assert "API key not configured" in result.output
+
+    @patch("src.cli.init_db")
+    @patch("src.cli.load_config")
+    @patch("src.cli.get_config")
+    def test_tasks_parse_displays_extracted_details(self, mock_get_config, mock_load_config, mock_init_db, runner, mock_config):
+        """Test tasks parse displays all extracted task details."""
+        mock_load_config.return_value = mock_config
+        mock_get_config.return_value = mock_config
+
+        from src.services.llm_service import ExtractedTask
+        from datetime import datetime, timedelta
+
+        extracted = ExtractedTask(
+            title="Fix production bug",
+            description="Critical issue in payment module",
+            priority="critical",
+            due_date=datetime.now() + timedelta(hours=4),
+            tags=["bug", "urgent"],
+            confidence=0.95,
+        )
+
+        with patch("src.services.llm_service.LLMService") as mock_llm_class:
+            mock_llm = MagicMock()
+            mock_llm.extract_tasks_from_text = AsyncMock(return_value=[extracted])
+            mock_llm_class.return_value = mock_llm
+
+            result = runner.invoke(cli, [
+                "tasks", "parse",
+                "urgent: fix production bug ASAP",
+                "--dry-run"
+            ])
+
+            assert result.exit_code == 0
+            assert "Fix production bug" in result.output
+            assert "CRITICAL" in result.output
+            assert "95%" in result.output
+            assert "#bug" in result.output or "#urgent" in result.output
+
+
+class TestTasksDueCommand:
+    """Tests for the tasks due command."""
+
+    @patch("src.cli.init_db")
+    @patch("src.cli.load_config")
+    @patch("src.cli.get_config")
+    @patch("src.cli.get_db_session")
+    def test_tasks_due_simple_format(self, mock_session, mock_get_config, mock_load_config, mock_init_db, runner, mock_config, mock_task):
+        """Test tasks due with simple date format like 'tomorrow'."""
+        mock_load_config.return_value = mock_config
+        mock_get_config.return_value = mock_config
+
+        mock_db = MagicMock()
+        mock_session.return_value.__enter__ = MagicMock(return_value=mock_db)
+        mock_session.return_value.__exit__ = MagicMock(return_value=False)
+
+        with patch("src.cli.TaskService") as mock_service_class:
+            mock_service = MagicMock()
+            mock_service.get_task.return_value = mock_task
+            mock_service_class.return_value = mock_service
+
+            result = runner.invoke(cli, [
+                "tasks", "due", "1", "tomorrow", "--yes"
+            ])
+
+            assert result.exit_code == 0
+            assert "Updated due date" in result.output
+            mock_service.update_task.assert_called_once()
+
+    @patch("src.cli.init_db")
+    @patch("src.cli.load_config")
+    @patch("src.cli.get_config")
+    @patch("src.cli.get_db_session")
+    def test_tasks_due_llm_parsing(self, mock_session, mock_get_config, mock_load_config, mock_init_db, runner, mock_config, mock_task):
+        """Test tasks due with complex date that requires LLM parsing."""
+        mock_load_config.return_value = mock_config
+        mock_get_config.return_value = mock_config
+
+        mock_db = MagicMock()
+        mock_session.return_value.__enter__ = MagicMock(return_value=mock_db)
+        mock_session.return_value.__exit__ = MagicMock(return_value=False)
+
+        from datetime import datetime, timedelta
+        parsed_date = datetime.now() + timedelta(days=5)
+
+        with patch("src.cli.TaskService") as mock_service_class, \
+             patch("src.services.llm_service.LLMService") as mock_llm_class:
+            mock_service = MagicMock()
+            mock_service.get_task.return_value = mock_task
+            mock_service_class.return_value = mock_service
+
+            mock_llm = MagicMock()
+            mock_llm.parse_date = AsyncMock(return_value=parsed_date)
+            mock_llm_class.return_value = mock_llm
+
+            result = runner.invoke(cli, [
+                "tasks", "due", "1", "next Friday", "--yes"
+            ])
+
+            assert result.exit_code == 0
+            assert "Updated due date" in result.output
+
+    @patch("src.cli.init_db")
+    @patch("src.cli.load_config")
+    @patch("src.cli.get_config")
+    @patch("src.cli.get_db_session")
+    def test_tasks_due_clear(self, mock_session, mock_get_config, mock_load_config, mock_init_db, runner, mock_config, mock_task):
+        """Test tasks due --clear removes the due date."""
+        mock_load_config.return_value = mock_config
+        mock_get_config.return_value = mock_config
+
+        mock_db = MagicMock()
+        mock_session.return_value.__enter__ = MagicMock(return_value=mock_db)
+        mock_session.return_value.__exit__ = MagicMock(return_value=False)
+
+        with patch("src.cli.TaskService") as mock_service_class:
+            mock_service = MagicMock()
+            mock_service.get_task.return_value = mock_task
+            mock_service_class.return_value = mock_service
+
+            result = runner.invoke(cli, [
+                "tasks", "due", "1", "--clear", "--yes"
+            ])
+
+            assert result.exit_code == 0
+            assert "Updated due date" in result.output
+            # Verify update was called with due_date=None
+            mock_service.update_task.assert_called_once()
+            call_kwargs = mock_service.update_task.call_args[1]
+            assert call_kwargs["due_date"] is None
+
+    @patch("src.cli.init_db")
+    @patch("src.cli.load_config")
+    @patch("src.cli.get_config")
+    @patch("src.cli.get_db_session")
+    def test_tasks_due_task_not_found(self, mock_session, mock_get_config, mock_load_config, mock_init_db, runner, mock_config):
+        """Test tasks due shows error when task not found."""
+        mock_load_config.return_value = mock_config
+        mock_get_config.return_value = mock_config
+
+        mock_db = MagicMock()
+        mock_session.return_value.__enter__ = MagicMock(return_value=mock_db)
+        mock_session.return_value.__exit__ = MagicMock(return_value=False)
+
+        with patch("src.cli.TaskService") as mock_service_class:
+            mock_service = MagicMock()
+            mock_service.get_task.return_value = None  # Task not found
+            mock_service_class.return_value = mock_service
+
+            result = runner.invoke(cli, [
+                "tasks", "due", "999", "tomorrow"
+            ])
+
+            assert result.exit_code == 0
+            assert "not found" in result.output
+
+    @patch("src.cli.init_db")
+    @patch("src.cli.load_config")
+    @patch("src.cli.get_config")
+    @patch("src.cli.get_db_session")
+    def test_tasks_due_confirmation_cancelled(self, mock_session, mock_get_config, mock_load_config, mock_init_db, runner, mock_config, mock_task):
+        """Test tasks due cancellation when user declines confirmation."""
+        mock_load_config.return_value = mock_config
+        mock_get_config.return_value = mock_config
+
+        mock_db = MagicMock()
+        mock_session.return_value.__enter__ = MagicMock(return_value=mock_db)
+        mock_session.return_value.__exit__ = MagicMock(return_value=False)
+
+        with patch("src.cli.TaskService") as mock_service_class:
+            mock_service = MagicMock()
+            mock_service.get_task.return_value = mock_task
+            mock_service_class.return_value = mock_service
+
+            # User types 'n' to decline
+            result = runner.invoke(cli, [
+                "tasks", "due", "1", "tomorrow"
+            ], input="n\n")
+
+            assert result.exit_code == 0
+            assert "Cancelled" in result.output
+            mock_service.update_task.assert_not_called()
+
+    @patch("src.cli.init_db")
+    @patch("src.cli.load_config")
+    def test_tasks_due_no_date_or_clear(self, mock_load_config, mock_init_db, runner, mock_config):
+        """Test tasks due requires either date or --clear."""
+        mock_load_config.return_value = mock_config
+
+        result = runner.invoke(cli, [
+            "tasks", "due", "1"
+        ])
+
+        assert result.exit_code == 0
+        assert "Please provide a date" in result.output
+
+    @patch("src.cli.init_db")
+    @patch("src.cli.load_config")
+    def test_tasks_due_both_date_and_clear(self, mock_load_config, mock_init_db, runner, mock_config):
+        """Test tasks due rejects both date and --clear."""
+        mock_load_config.return_value = mock_config
+
+        result = runner.invoke(cli, [
+            "tasks", "due", "1", "tomorrow", "--clear"
+        ])
+
+        assert result.exit_code == 0
+        assert "Cannot specify both" in result.output
+
+    @patch("src.cli.init_db")
+    @patch("src.cli.load_config")
+    @patch("src.cli.get_config")
+    @patch("src.cli.get_db_session")
+    def test_tasks_due_no_api_key_complex_date(self, mock_session, mock_get_config, mock_load_config, mock_init_db, runner, mock_task):
+        """Test tasks due shows help when complex date used without API key."""
+        mock_config = MagicMock()
+        mock_config.llm.api_key = ""  # No API key
+        mock_load_config.return_value = mock_config
+        mock_get_config.return_value = mock_config
+
+        mock_db = MagicMock()
+        mock_session.return_value.__enter__ = MagicMock(return_value=mock_db)
+        mock_session.return_value.__exit__ = MagicMock(return_value=False)
+
+        with patch("src.cli.TaskService") as mock_service_class:
+            mock_service = MagicMock()
+            mock_service.get_task.return_value = mock_task
+            mock_service_class.return_value = mock_service
+
+            # "next Friday" can't be parsed without LLM
+            result = runner.invoke(cli, [
+                "tasks", "due", "1", "next Friday"
+            ])
+
+            assert result.exit_code == 0
+            assert "Could not parse date" in result.output
+            assert "configure an LLM API key" in result.output

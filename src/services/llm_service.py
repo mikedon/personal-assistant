@@ -7,7 +7,7 @@ import json
 import logging
 import time
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any, Callable
 
 import litellm
@@ -553,6 +553,77 @@ Suggest calendar optimizations as JSON:"""
         except Exception as e:
             logger.error(f"Calendar optimization failed: {e}")
             return []
+
+    async def parse_date(self, date_string: str) -> datetime | None:
+        """Parse a natural language date string into a datetime.
+
+        Args:
+            date_string: Natural language date like "next Friday", "end of month", etc.
+
+        Returns:
+            Parsed datetime or None if parsing fails.
+        """
+        today = datetime.now()
+        today_str = today.strftime("%Y-%m-%d")
+        weekday = today.strftime("%A")
+
+        system_prompt = f"""You are a date parsing assistant. Convert natural language date expressions to ISO format datetime.
+
+Today's date is {today_str} ({weekday}). The current time is {today.strftime("%H:%M")}.
+
+Rules:
+- Return ONLY the datetime in ISO format: YYYY-MM-DDTHH:MM:SS
+- If no time is specified, use 23:59:00 (end of day)
+- For relative dates like "next Friday", calculate the actual date
+- For "end of month", use the last day of the current month
+- For "end of week", use Sunday
+- If the date is ambiguous or cannot be parsed, return "INVALID"
+
+Examples:
+- "tomorrow" -> {(today + timedelta(days=1)).strftime("%Y-%m-%d")}T23:59:00
+- "next Friday" -> [calculate the next Friday from today]
+- "in 3 days" -> {(today + timedelta(days=3)).strftime("%Y-%m-%d")}T23:59:00
+- "February 15th" -> 2026-02-15T23:59:00
+- "this Sunday at 5pm" -> [next Sunday]T17:00:00
+
+Respond with ONLY the ISO datetime string, nothing else."""
+
+        user_prompt = f"Parse this date: {date_string}"
+
+        try:
+            response = await self._call_llm(
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt},
+                ],
+                temperature=0.1,  # Very low temperature for consistent parsing
+                max_tokens=50,  # Short response expected
+                request_type="date_parsing",
+            )
+
+            date_str = response.content.strip()
+
+            # Check for invalid response
+            if date_str.upper() == "INVALID":
+                logger.warning(f"LLM could not parse date: {date_string}")
+                return None
+
+            # Parse the ISO format datetime
+            try:
+                # Handle various ISO formats
+                date_str = date_str.replace("Z", "")
+                parsed = datetime.fromisoformat(date_str)
+                logger.info(f"Parsed '{date_string}' -> {parsed}")
+                return parsed
+            except ValueError as e:
+                logger.warning(f"Failed to parse LLM date response '{date_str}': {e}")
+                return None
+
+        except LLMError:
+            raise
+        except Exception as e:
+            logger.error(f"Date parsing failed: {e}")
+            return None
 
     def _parse_json_response(self, content: str) -> Any:
         """Parse JSON from LLM response, handling markdown code blocks.
