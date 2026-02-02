@@ -414,6 +414,32 @@ The priority score is calculated from five factors:
 - Secure credential storage
 - User controls permissions through OAuth consent
 
+### Gmail Query Configuration
+**Decision**: Configurable email filtering via `google.gmail` config section
+**Implementation**:
+- `inbox_type`: Filter by inbox type (`all`, `unread`, `not_spam`, `important`)
+- `lookback_hours`/`lookback_days`: Time period for email queries (hours takes precedence)
+- `include_senders`/`exclude_senders`: Sender whitelist/blacklist (partial match)
+- `include_subjects`/`exclude_subjects`: Subject pattern whitelist/blacklist
+- `priority_senders`: Senders whose emails are marked high priority
+
+**Query Building**:
+- Inbox type maps to Gmail operators: `is:unread`, `-in:spam`, `is:important`
+- Small sender lists (≤5) are added to Gmail query with `from:` operator
+- Larger lists rely on post-fetch filtering for performance
+
+**Filter Behavior**:
+- Exclude filters take precedence over include filters
+- All pattern matching is case-insensitive
+- Partial string matching (e.g., `@domain.com` matches any email from that domain)
+- Backwards compatible: root-level config still works, nested `gmail` config takes precedence
+
+**Rationale**:
+- Users need control over which emails generate tasks
+- Reduces noise from automated emails, newsletters, etc.
+- Gmail API query optimization reduces API calls
+- Flexible filtering covers diverse use cases
+
 ## Voice Input System
 
 ### Voice Service Design
@@ -453,6 +479,16 @@ Microphone → sounddevice → WAV bytes → Whisper API → Text → LLM → Ta
 - Interactive UI with progress indicator during recording
 
 ## Changelog
+
+### 2026-01-31 - Gmail Configuration Enhancements
+- Added `GmailQueryConfig` Pydantic model for Gmail-specific settings
+- Implemented configurable inbox type filtering (`all`, `unread`, `not_spam`, `important`)
+- Added `lookback_hours` option (takes precedence over `lookback_days`)
+- Added sender include/exclude filtering with partial match support
+- Added subject include/exclude filtering for topic-based filtering
+- Dynamic Gmail query building with sender optimization
+- Backwards compatible with existing root-level config
+- Added 16 new unit tests for query building and filtering
 
 ### 2026-01-31 - Phase 8 Complete
 - Added voice input feature for task creation

@@ -25,6 +25,41 @@ class DatabaseConfig(BaseModel):
     echo: bool = Field(default=False, description="Echo SQL statements for debugging")
 
 
+class GmailQueryConfig(BaseModel):
+    """Gmail query configuration for filtering emails."""
+
+    inbox_type: str = Field(
+        default="unread",
+        description="Inbox filter type: 'all', 'unread', 'not_spam', 'important'",
+    )
+    lookback_hours: int | None = Field(
+        default=None,
+        description="Hours to look back (takes precedence over lookback_days if set)",
+    )
+    lookback_days: int = Field(default=1, ge=1, description="Days to look back for emails")
+    max_results: int = Field(default=10, ge=1, le=100, description="Maximum emails to fetch per poll")
+    include_senders: list[str] = Field(
+        default=[],
+        description="Only process emails from these senders (empty = all senders)",
+    )
+    exclude_senders: list[str] = Field(
+        default=[],
+        description="Ignore emails from these senders",
+    )
+    include_subjects: list[str] = Field(
+        default=[],
+        description="Only process emails with subjects containing these patterns (empty = all subjects)",
+    )
+    exclude_subjects: list[str] = Field(
+        default=[],
+        description="Skip emails with subjects containing these patterns",
+    )
+    priority_senders: list[str] = Field(
+        default=[],
+        description="Emails from these senders are marked high priority",
+    )
+
+
 class GoogleConfig(BaseModel):
     """Google API configuration for Gmail, Calendar, and Drive."""
 
@@ -38,6 +73,7 @@ class GoogleConfig(BaseModel):
             "https://www.googleapis.com/auth/drive.readonly",
         ]
     )
+    gmail: GmailQueryConfig = Field(default_factory=GmailQueryConfig, description="Gmail query settings")
 
 
 class SlackConfig(BaseModel):

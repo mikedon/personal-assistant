@@ -15,6 +15,8 @@ database:
   echo: false
 
 google:
+  # Enable Google integrations
+  enabled: true
   # OAuth credentials from Google Cloud Console
   credentials_path: "credentials.json"
   token_path: "token.json"
@@ -22,6 +24,36 @@ google:
     - "https://www.googleapis.com/auth/gmail.readonly"
     - "https://www.googleapis.com/auth/calendar"
     - "https://www.googleapis.com/auth/drive.readonly"
+
+  # Gmail-specific query configuration
+  gmail:
+    # Inbox filter type: "all", "unread", "not_spam", "important"
+    inbox_type: "unread"
+    # Time period to query (lookback_hours takes precedence if set)
+    lookback_hours: null  # e.g., 24 for last 24 hours
+    lookback_days: 1      # Default: last 1 day
+    max_results: 10       # Maximum emails to fetch per poll
+
+    # Sender filtering (case-insensitive, partial match)
+    include_senders: []   # Only process emails from these senders (empty = all)
+      # - "boss@company.com"
+      # - "@important-domain.com"
+    exclude_senders: []   # Ignore emails from these senders
+      # - "noreply@"
+      # - "newsletter@"
+
+    # Subject filtering (case-insensitive, partial match)
+    include_subjects: []  # Only process emails with these subject patterns
+      # - "action required"
+      # - "urgent"
+    exclude_subjects: []  # Skip emails with these subject patterns
+      # - "[automated]"
+      # - "google doc edit"
+      # - "calendar invite"
+
+    # Emails from these senders are marked high priority
+    priority_senders:
+      - "boss@company.com"
 
 slack:
   # Slack app tokens

@@ -24,3 +24,9 @@
 - Using Obsidian vault as the document store
 - Creating a user interface to interact with the personal assistant agent configuration
 - Ability to view detailed logs of the agent
+
+## Gmail Functionality
+- The agent should have configurations around what emails to query for tasks
+- It should support specifying the time period to query (e.g. last 24 hours, last week)
+- It should have a configuration to influence what type of email topics it should specifically consider or exclude when analyzing for tasks (e.g. google doc edits, requests for meeting schedules, emails from certain people)
+- It should have a confugration for which type of inbox to query (e.g. All Emails, Only Unread, Not Spam)

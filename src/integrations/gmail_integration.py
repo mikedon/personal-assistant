@@ -3,7 +3,6 @@
 import base64
 import time
 from datetime import datetime, timedelta
-from email.utils import parsedate_to_datetime
 from typing import Any
 
 from googleapiclient.discovery import build
@@ -25,6 +24,14 @@ class GmailIntegration(BaseIntegration):
 
     SCOPES = ["https://www.googleapis.com/auth/gmail.readonly"]
 
+    # Mapping of inbox_type config to Gmail query operators
+    INBOX_TYPE_QUERIES = {
+        "all": "",
+        "unread": "is:unread",
+        "not_spam": "-in:spam",
+        "important": "is:important",
+    }
+
     def __init__(self, config: dict[str, Any]):
         """Initialize Gmail integration.
 
@@ -38,8 +45,22 @@ class GmailIntegration(BaseIntegration):
             scopes=self.SCOPES,
         )
         self.service = None
-        self.max_results = config.get("max_results", 10)
-        self.lookback_days = config.get("lookback_days", 1)
+
+        # Get gmail-specific config (nested under 'gmail' key or at root for backwards compat)
+        gmail_config = config.get("gmail", {})
+        self.max_results = gmail_config.get("max_results", config.get("max_results", 10))
+        self.lookback_days = gmail_config.get("lookback_days", config.get("lookback_days", 1))
+        self.lookback_hours = gmail_config.get("lookback_hours")
+        self.inbox_type = gmail_config.get("inbox_type", "unread")
+
+        # Filtering options
+        self.include_senders = [s.lower() for s in gmail_config.get("include_senders", [])]
+        self.exclude_senders = [s.lower() for s in gmail_config.get("exclude_senders", [])]
+        self.include_subjects = [s.lower() for s in gmail_config.get("include_subjects", [])]
+        self.exclude_subjects = [s.lower() for s in gmail_config.get("exclude_subjects", [])]
+        self.priority_senders = [s.lower() for s in gmail_config.get(
+            "priority_senders", config.get("priority_senders", [])
+        )]
 
     @property
     def integration_type(self) -> IntegrationType:
@@ -79,8 +100,37 @@ class GmailIntegration(BaseIntegration):
             )
             raise AuthenticationError(f"Gmail authentication failed: {e}")
 
+    def _build_query(self) -> str:
+        """Build Gmail search query based on configuration.
+
+        Returns:
+            Gmail search query string.
+        """
+        query_parts = []
+
+        # Add inbox type filter
+        inbox_query = self.INBOX_TYPE_QUERIES.get(self.inbox_type, "is:unread")
+        if inbox_query:
+            query_parts.append(inbox_query)
+
+        # Calculate lookback time (hours takes precedence over days)
+        if self.lookback_hours is not None:
+            lookback_time = datetime.utcnow() - timedelta(hours=self.lookback_hours)
+        else:
+            lookback_time = datetime.utcnow() - timedelta(days=self.lookback_days)
+        query_parts.append(f"after:{lookback_time.strftime('%Y/%m/%d')}")
+
+        # Add sender filters to query if possible (Gmail supports from: operator)
+        # Note: We still do post-fetch filtering for more precise matching
+        if self.include_senders and len(self.include_senders) <= 5:
+            # Gmail OR syntax: from:(addr1 OR addr2)
+            sender_query = " OR ".join(self.include_senders)
+            query_parts.append(f"from:({sender_query})")
+
+        return " ".join(query_parts)
+
     async def poll(self) -> list[ActionableItem]:
-        """Poll Gmail for unread emails that may contain actionable items.
+        """Poll Gmail for emails that may contain actionable items.
 
         Returns:
             List of actionable items extracted from emails.
@@ -94,9 +144,8 @@ class GmailIntegration(BaseIntegration):
         try:
             items = []
 
-            # Calculate lookback time
-            lookback_time = datetime.utcnow() - timedelta(days=self.lookback_days)
-            query = f"is:unread after:{lookback_time.strftime('%Y/%m/%d')}"
+            # Build query from configuration
+            query = self._build_query()
 
             # Get list of unread messages
             list_start = time.time()
@@ -145,6 +194,41 @@ class GmailIntegration(BaseIntegration):
         except Exception as e:
             raise PollError(f"Unexpected error polling Gmail: {e}")
 
+    def _should_include_email(self, sender: str, subject: str) -> bool:
+        """Check if an email should be included based on filter configuration.
+
+        Args:
+            sender: Email sender address
+            subject: Email subject line
+
+        Returns:
+            True if email passes all filters, False if it should be excluded.
+        """
+        sender_lower = sender.lower()
+        subject_lower = subject.lower()
+
+        # Check sender exclusion (exclude takes precedence)
+        if self.exclude_senders:
+            if any(excluded in sender_lower for excluded in self.exclude_senders):
+                return False
+
+        # Check sender inclusion (if specified, sender must match)
+        if self.include_senders:
+            if not any(included in sender_lower for included in self.include_senders):
+                return False
+
+        # Check subject exclusion
+        if self.exclude_subjects:
+            if any(excluded in subject_lower for excluded in self.exclude_subjects):
+                return False
+
+        # Check subject inclusion (if specified, subject must match)
+        if self.include_subjects:
+            if not any(included in subject_lower for included in self.include_subjects):
+                return False
+
+        return True
+
     def _extract_actionable_item(self, message: dict) -> ActionableItem | None:
         """Extract actionable item from a Gmail message.
 
@@ -155,11 +239,15 @@ class GmailIntegration(BaseIntegration):
             ActionableItem if the email requires action, None otherwise.
         """
         headers = {h["name"]: h["value"] for h in message["payload"]["headers"]}
-        
+
         subject = headers.get("Subject", "(No Subject)")
         sender = headers.get("From", "Unknown")
         date_str = headers.get("Date")
         message_id = message["id"]
+
+        # Apply sender/subject filters
+        if not self._should_include_email(sender, subject):
+            return None
 
         # Try to parse email body
         body = self._get_message_body(message["payload"])
@@ -168,7 +256,7 @@ class GmailIntegration(BaseIntegration):
         # 1. Have question marks (likely questions)
         # 2. Contain action words
         # 3. Are from specific senders (configurable)
-        
+
         action_keywords = ["please", "could you", "can you", "need", "urgent", "asap", "action required"]
         question_marks = body.count("?") if body else 0
         has_action_words = any(keyword in body.lower() if body else False for keyword in action_keywords)
@@ -240,8 +328,7 @@ class GmailIntegration(BaseIntegration):
         Returns:
             True if sender is priority.
         """
-        priority_senders = self.config.get("priority_senders", [])
-        return any(priority in sender.lower() for priority in priority_senders)
+        return any(priority in sender.lower() for priority in self.priority_senders)
 
     async def mark_as_read(self, message_id: str) -> bool:
         """Mark an email as read.

@@ -2,8 +2,7 @@
 
 import base64
 from datetime import datetime
-from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock, Mock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -13,7 +12,6 @@ from src.integrations.base import (
     AuthenticationError,
     BaseIntegration,
     IntegrationType,
-    PollError,
 )
 from src.integrations.gmail_integration import GmailIntegration
 from src.integrations.manager import IntegrationManager
@@ -729,3 +727,204 @@ class TestIntegrationManagerPollAll:
         results = await manager.poll_all()
 
         assert results == {}
+
+
+class TestGmailIntegrationQueryBuilding:
+    """Tests for GmailIntegration query building and filtering."""
+
+    def test_build_query_default_unread(self):
+        """Test default query uses 'is:unread' filter."""
+        config = {"enabled": True, "gmail": {}}
+        integration = GmailIntegration(config)
+
+        query = integration._build_query()
+
+        assert "is:unread" in query
+        assert "after:" in query
+
+    def test_build_query_inbox_type_all(self):
+        """Test query with inbox_type='all' has no inbox filter."""
+        config = {"enabled": True, "gmail": {"inbox_type": "all"}}
+        integration = GmailIntegration(config)
+
+        query = integration._build_query()
+
+        assert "is:unread" not in query
+        assert "is:important" not in query
+        assert "after:" in query
+
+    def test_build_query_inbox_type_not_spam(self):
+        """Test query with inbox_type='not_spam' uses '-in:spam' filter."""
+        config = {"enabled": True, "gmail": {"inbox_type": "not_spam"}}
+        integration = GmailIntegration(config)
+
+        query = integration._build_query()
+
+        assert "-in:spam" in query
+        assert "after:" in query
+
+    def test_build_query_inbox_type_important(self):
+        """Test query with inbox_type='important' uses 'is:important' filter."""
+        config = {"enabled": True, "gmail": {"inbox_type": "important"}}
+        integration = GmailIntegration(config)
+
+        query = integration._build_query()
+
+        assert "is:important" in query
+        assert "after:" in query
+
+    def test_build_query_lookback_hours_takes_precedence(self):
+        """Test that lookback_hours takes precedence over lookback_days."""
+        config = {
+            "enabled": True,
+            "gmail": {"lookback_hours": 6, "lookback_days": 7},
+        }
+        integration = GmailIntegration(config)
+
+        # With 6 hours lookback, the date should be today (not 7 days ago)
+        query = integration._build_query()
+        assert "after:" in query
+        # Verify lookback_hours is being used
+        assert integration.lookback_hours == 6
+
+    def test_build_query_include_senders_adds_from_clause(self):
+        """Test that include_senders adds 'from:' clause to query."""
+        config = {
+            "enabled": True,
+            "gmail": {"include_senders": ["boss@example.com", "ceo@example.com"]},
+        }
+        integration = GmailIntegration(config)
+
+        query = integration._build_query()
+
+        assert "from:(boss@example.com OR ceo@example.com)" in query
+
+    def test_build_query_many_senders_skips_from_clause(self):
+        """Test that more than 5 senders skips 'from:' in query (relies on post-filtering)."""
+        config = {
+            "enabled": True,
+            "gmail": {"include_senders": ["a@x.com", "b@x.com", "c@x.com", "d@x.com", "e@x.com", "f@x.com"]},
+        }
+        integration = GmailIntegration(config)
+
+        query = integration._build_query()
+
+        assert "from:" not in query
+
+
+class TestGmailIntegrationFiltering:
+    """Tests for GmailIntegration sender and subject filtering."""
+
+    def test_should_include_email_no_filters(self):
+        """Test that email passes when no filters configured."""
+        config = {"enabled": True, "gmail": {}}
+        integration = GmailIntegration(config)
+
+        result = integration._should_include_email("anyone@example.com", "Any Subject")
+
+        assert result is True
+
+    def test_should_include_email_exclude_sender_blocks(self):
+        """Test that exclude_senders blocks matching emails."""
+        config = {
+            "enabled": True,
+            "gmail": {"exclude_senders": ["noreply@", "newsletter@"]},
+        }
+        integration = GmailIntegration(config)
+
+        assert integration._should_include_email("noreply@company.com", "Update") is False
+        assert integration._should_include_email("newsletter@news.com", "Weekly") is False
+        assert integration._should_include_email("boss@company.com", "Meeting") is True
+
+    def test_should_include_email_include_sender_filters(self):
+        """Test that include_senders only allows matching emails."""
+        config = {
+            "enabled": True,
+            "gmail": {"include_senders": ["boss@example.com", "@important.com"]},
+        }
+        integration = GmailIntegration(config)
+
+        assert integration._should_include_email("boss@example.com", "Hi") is True
+        assert integration._should_include_email("ceo@important.com", "Meeting") is True
+        assert integration._should_include_email("random@other.com", "Spam") is False
+
+    def test_should_include_email_exclude_takes_precedence(self):
+        """Test that exclude_senders takes precedence over include_senders."""
+        config = {
+            "enabled": True,
+            "gmail": {
+                "include_senders": ["@company.com"],
+                "exclude_senders": ["noreply@company.com"],
+            },
+        }
+        integration = GmailIntegration(config)
+
+        assert integration._should_include_email("boss@company.com", "Hi") is True
+        assert integration._should_include_email("noreply@company.com", "Auto") is False
+
+    def test_should_include_email_exclude_subject_blocks(self):
+        """Test that exclude_subjects blocks matching emails."""
+        config = {
+            "enabled": True,
+            "gmail": {"exclude_subjects": ["[automated]", "google doc edit"]},
+        }
+        integration = GmailIntegration(config)
+
+        assert integration._should_include_email("a@b.com", "[Automated] Report") is False
+        assert integration._should_include_email("a@b.com", "New Google Doc Edit") is False
+        assert integration._should_include_email("a@b.com", "Meeting Request") is True
+
+    def test_should_include_email_include_subject_filters(self):
+        """Test that include_subjects only allows matching emails."""
+        config = {
+            "enabled": True,
+            "gmail": {"include_subjects": ["urgent", "action required"]},
+        }
+        integration = GmailIntegration(config)
+
+        assert integration._should_include_email("a@b.com", "URGENT: Please review") is True
+        assert integration._should_include_email("a@b.com", "Action Required: Sign") is True
+        assert integration._should_include_email("a@b.com", "Weekly Newsletter") is False
+
+    def test_should_include_email_case_insensitive(self):
+        """Test that filtering is case-insensitive."""
+        config = {
+            "enabled": True,
+            "gmail": {
+                "include_senders": ["BOSS@EXAMPLE.COM"],
+                "exclude_subjects": ["NEWSLETTER"],
+            },
+        }
+        integration = GmailIntegration(config)
+
+        # Sender matching is case-insensitive
+        assert integration._should_include_email("boss@example.com", "Hi") is True
+        assert integration._should_include_email("Boss@Example.com", "Hi") is True
+        # Subject matching is case-insensitive
+        assert integration._should_include_email("boss@example.com", "newsletter") is False
+        assert integration._should_include_email("boss@example.com", "Newsletter") is False
+
+    def test_backwards_compatible_with_root_config(self):
+        """Test that config at root level still works for backwards compatibility."""
+        config = {
+            "enabled": True,
+            "max_results": 20,
+            "lookback_days": 3,
+            "priority_senders": ["vip@example.com"],
+        }
+        integration = GmailIntegration(config)
+
+        assert integration.max_results == 20
+        assert integration.lookback_days == 3
+        assert "vip@example.com" in integration.priority_senders
+
+    def test_nested_config_overrides_root(self):
+        """Test that nested gmail config overrides root config."""
+        config = {
+            "enabled": True,
+            "max_results": 5,
+            "gmail": {"max_results": 25},
+        }
+        integration = GmailIntegration(config)
+
+        assert integration.max_results == 25
