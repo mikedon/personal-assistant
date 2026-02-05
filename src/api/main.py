@@ -5,7 +5,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 
 from src import __version__
-from src.api.routes import agent_router, initiatives_router, tasks_router, voice_router
+from src.api.routes import agent_router, initiatives_router, status_router, tasks_router, voice_router
 from src.api.schemas import HealthResponse
 from src.models import init_db
 
@@ -29,6 +29,7 @@ app = FastAPI(
 # Include routers
 app.include_router(tasks_router, prefix="/api")
 app.include_router(initiatives_router, prefix="/api")
+app.include_router(status_router, prefix="/api")
 app.include_router(agent_router, prefix="/api")
 app.include_router(voice_router, prefix="/api")
 

@@ -1111,6 +1111,46 @@ def tasks_voice(duration, transcribe_only):
         console.print(f"[red]Unexpected error: {e}[/red]")
 
 
+@tasks.command("associate")
+@click.argument("task_id", type=int)
+@click.argument("initiative_id", type=int)
+def tasks_associate(task_id, initiative_id):
+    """Associate a task with an initiative.
+
+    Links a task to an initiative by ID. The task's priority score will
+    be recalculated to account for the initiative's priority.
+
+    Examples:
+
+        pa tasks associate 5 2     # Link task #5 to initiative #2
+    """
+    with get_db_session() as db:
+        task_service = TaskService(db)
+        initiative_service = InitiativeService(db)
+
+        # Get the task
+        task = task_service.get_task(task_id)
+        if not task:
+            console.print(f"[red]Task #{task_id} not found.[/red]")
+            return
+
+        # Get the initiative
+        initiative = initiative_service.get_initiative(initiative_id)
+        if not initiative:
+            console.print(f"[red]Initiative #{initiative_id} not found.[/red]")
+            return
+
+        # Show current state
+        current_initiative = f"[cyan]{task.initiative.title}[/cyan] (#{task.initiative.id})" if task.initiative else "[dim]None[/dim]"
+        console.print(f"\n[bold]Task #{task_id}:[/bold] {task.title}")
+        console.print(f"  Current initiative: {current_initiative}")
+        console.print(f"  New initiative:     [cyan]{initiative.title}[/cyan] (#{initiative.id})")
+
+        # Update the task
+        task_service.update_task(task, initiative_id=initiative_id)
+        console.print(f"\n[green]✓[/green] Associated task #{task_id} with initiative #{initiative_id}")
+
+
 @tasks.command("parse")
 @click.argument("text")
 @click.option("--dry-run", "-n", is_flag=True, help="Show what would be created without creating")
@@ -1142,6 +1182,21 @@ def tasks_parse(text, dry_run, yes):
     # Initialize LLM service
     llm_service = LLMService(config.llm)
 
+    # Get active initiatives for LLM context
+    initiatives_for_llm = []
+    with get_db_session() as db:
+        initiative_service = InitiativeService(db)
+        active_initiatives = initiative_service.get_active_initiatives()
+        initiatives_for_llm = [
+            {
+                "id": init.id,
+                "title": init.title,
+                "priority": init.priority.value,
+                "description": init.description,
+            }
+            for init in active_initiatives
+        ]
+
     try:
         with Progress(
             SpinnerColumn(),
@@ -1150,12 +1205,13 @@ def tasks_parse(text, dry_run, yes):
         ) as progress:
             task = progress.add_task("Analyzing text...", total=None)
 
-            # Extract tasks from text
+            # Extract tasks from text with initiative context
             extracted_tasks = run_async(
                 llm_service.extract_tasks_from_text(
                     text=text,
                     source="cli",
                     context="User entered this text via command line to create a task.",
+                    initiatives=initiatives_for_llm if initiatives_for_llm else None,
                 )
             )
 
@@ -1203,6 +1259,17 @@ def tasks_parse(text, dry_run, yes):
                 tags_str = ", ".join(f"#{t}" for t in extracted.tags)
                 lines.append(f"[dim]Tags:[/dim] {tags_str}")
 
+            # Show suggested initiative if present
+            suggested_initiative_name = None
+            if extracted.suggested_initiative_id and initiatives_for_llm:
+                suggested = next(
+                    (i for i in initiatives_for_llm if i["id"] == extracted.suggested_initiative_id),
+                    None,
+                )
+                if suggested:
+                    suggested_initiative_name = suggested["title"]
+                    lines.append(f"[cyan]💡 Suggested Initiative:[/cyan] {suggested_initiative_name}")
+
             title = "Extracted Task" if len(extracted_tasks) == 1 else f"Extracted Task {i}/{len(extracted_tasks)}"
             console.print(Panel("\n".join(lines), title=title, border_style="cyan"))
 
@@ -1229,6 +1296,15 @@ def tasks_parse(text, dry_run, yes):
                     console.print("[dim]Task not created.[/dim]")
                     continue
 
+            # Ask about initiative association if suggested
+            initiative_id = None
+            if extracted.suggested_initiative_id and not dry_run:
+                if yes or click.confirm(
+                    f"Link to initiative '{suggested_initiative_name}'?",
+                    default=True,
+                ):
+                    initiative_id = extracted.suggested_initiative_id
+
             # Create the task
             with get_db_session() as db:
                 service = TaskService(db)
@@ -1239,8 +1315,11 @@ def tasks_parse(text, dry_run, yes):
                     source=TaskSource.MANUAL,
                     due_date=extracted.due_date,
                     tags=extracted.tags,
+                    initiative_id=initiative_id,
                 )
                 console.print(f"[green]✓[/green] Created task #{task.id}: {task.title}")
+                if initiative_id:
+                    console.print(f"  [cyan]Initiative:[/cyan] {suggested_initiative_name}")
                 created_count += 1
 
         if len(extracted_tasks) > 1 and not dry_run:
@@ -1454,6 +1533,67 @@ def initiatives_delete(initiative_id, yes):
         console.print(f"[green]✓[/green] Deleted initiative #{initiative_id}")
 
 
+@initiatives.command("add-tasks")
+@click.argument("initiative_id", type=int)
+@click.argument("task_ids", type=int, nargs=-1, required=True)
+def initiatives_add_tasks(initiative_id, task_ids):
+    """Associate multiple tasks with an initiative.
+
+    Links one or more tasks to an initiative. The tasks' priority scores
+    will be recalculated to account for the initiative's priority.
+
+    Examples:
+
+        pa initiatives add-tasks 2 5 6 7      # Link tasks #5, #6, #7 to initiative #2
+
+        pa itvs add-tasks 1 10 11 12 13       # Link tasks to initiative #1 (alias: itvs)
+    """
+    with get_db_session() as db:
+        task_service = TaskService(db)
+        initiative_service = InitiativeService(db)
+
+        # Get the initiative
+        initiative = initiative_service.get_initiative(initiative_id)
+        if not initiative:
+            console.print(f"[red]Initiative #{initiative_id} not found.[/red]")
+            return
+
+        # Fetch all tasks and check they exist
+        tasks_to_link = []
+        invalid_ids = []
+
+        for task_id in task_ids:
+            task = task_service.get_task(task_id)
+            if not task:
+                invalid_ids.append(task_id)
+            else:
+                tasks_to_link.append(task)
+
+        if invalid_ids:
+            console.print(f"[red]Task(s) not found: {', '.join(f'#{id}' for id in invalid_ids)}[/red]")
+            if not tasks_to_link:
+                return
+            console.print(f"[yellow]Continuing with {len(tasks_to_link)} valid task(s)...[/yellow]")
+
+        # Display what we're doing
+        console.print(f"\n[bold]Initiative #{initiative_id}:[/bold] {initiative.title}")
+        console.print(f"[bold]Tasks to associate:[/bold]")
+        for task in tasks_to_link:
+            pri_emoji = {"critical": "🔴", "high": "🟠", "medium": "🟡", "low": "🟢"}.get(
+                task.priority.value, "⚪"
+            )
+            current_init = f" (currently in {task.initiative.title})" if task.initiative else ""
+            console.print(f"  {pri_emoji} #{task.id}: {task.title[:50]}{current_init}")
+
+        # Update all tasks
+        updated_count = 0
+        for task in tasks_to_link:
+            task_service.update_task(task, initiative_id=initiative_id)
+            updated_count += 1
+
+        console.print(f"\n[green]✓[/green] Associated {updated_count} task(s) with initiative #{initiative_id}")
+
+
 # --- Alias commands (itvs) --- 
 @itvs.command("list")
 @click.option("--all", "-a", "show_all", is_flag=True, help="Include completed initiatives")
@@ -1495,6 +1635,14 @@ def itvs_complete(initiative_id):
 def itvs_delete(initiative_id, yes):
     """Delete an initiative."""
     initiatives_delete(initiative_id, yes)
+
+
+@itvs.command("add-tasks")
+@click.argument("initiative_id", type=int)
+@click.argument("task_ids", type=int, nargs=-1, required=True)
+def itvs_add_tasks(initiative_id, task_ids):
+    """Associate multiple tasks with an initiative."""
+    initiatives_add_tasks(initiative_id, task_ids)
 
 
 # --- Summary Command ---
@@ -1688,6 +1836,66 @@ def server(host, port, reload):
         port=port,
         reload=reload,
     )
+
+
+# --- macOS Menu Bar Command ---
+
+
+@cli.command(name="macos-menu")
+@click.option("--api-url", default="http://localhost:8000",
+              help="Base URL of the personal assistant API (default: http://localhost:8000)")
+@click.option("--start-api", is_flag=True, default=True,
+              help="Start the API server if not running (default: True)")
+@click.option("--no-start-api", is_flag=True,
+              help="Don't start the API server automatically")
+@click.option("--refresh-interval", "-r", default=300, type=int,
+              help="How often to refresh task data in seconds (default: 300)")
+def macos_menu(api_url, start_api, no_start_api, refresh_interval):
+    """Start the macOS menu bar task counter (macOS only).
+
+    Displays a menu bar icon showing the count of tasks due today or overdue,
+    with a dropdown menu to view the task list.
+
+    Examples:
+
+        pa macos-menu                    # Start with default settings
+
+        pa macos-menu --refresh-interval 120  # Update every 2 minutes
+
+        pa macos-menu --api-url http://localhost:9000  # Custom API URL
+    """
+    import sys
+    import platform
+
+    # Check if running on macOS
+    if platform.system() != "Darwin":
+        console.print("[red]✗[/red] This command is only available on macOS.")
+        sys.exit(1)
+
+    # Try to import macOS modules
+    try:
+        from src.macos.launcher import launch
+    except ImportError:
+        console.print(
+            "[red]✗ macOS integration not available.[/red]\n"
+            "[yellow]Install PyObjC:[/yellow]\n"
+            "  pip install -e '.[macos]'"
+        )
+        sys.exit(1)
+
+    # Launch the menu bar app
+    try:
+        launch(
+            api_url=api_url,
+            start_api=(not no_start_api) and start_api,
+            refresh_interval=refresh_interval,
+        )
+    except KeyboardInterrupt:
+        console.print("\n[dim]Stopped.[/dim]")
+        sys.exit(0)
+    except Exception as e:
+        console.print(f"[red]✗ Error: {e}[/red]")
+        sys.exit(1)
 
 
 # --- Notify Command ---

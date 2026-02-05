@@ -34,6 +34,9 @@ dev = [
     "ruff>=0.1.0",
     "alembic>=1.18.0",
 ]
+macos = [
+    "pyobjc>=10.0",
+]
 
 [project.scripts]
 pa = "src.cli:main"
