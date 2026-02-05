@@ -17,10 +17,10 @@ from AppKit import (
     NSStatusBar,
     NSVariableStatusItemLength,
 )
-from Foundation import NSTimer
+from Foundation import NSObject, NSTimer
 
 
-class TaskMenuApp:
+class TaskMenuApp(NSObject):
     """macOS menu bar application for task display and management."""
 
     def __init__(self, api_url: str = "http://localhost:8000", refresh_interval: int = 300):
@@ -55,6 +55,9 @@ class TaskMenuApp:
         # Create menu
         self.menu = NSMenu.alloc().init()
         self.status_item.setMenu_(self.menu)
+
+        # Build the initial menu (even before first data fetch)
+        self._rebuild_menu()
 
         # Add a refresh timer
         NSTimer.scheduledTimerWithTimeInterval_target_selector_userInfo_repeats_(
@@ -108,6 +111,17 @@ class TaskMenuApp:
         """Update menu bar title and menu items (must run on main thread).
 
         This is called from the background thread, so we dispatch to main thread.
+        """
+        # Dispatch to main thread using PyObjC's method
+        self.performSelectorOnMainThread_withObject_waitUntilDone_(
+            "_update_ui_main_thread:", None, False
+        )
+
+    def _update_ui_main_thread(self, _: Any = None) -> None:
+        """Update menu bar title and menu items on the main thread.
+
+        Args:
+            _: Unused parameter (required by PyObjC selector)
         """
         # Update title
         self._update_menu_bar_title()
