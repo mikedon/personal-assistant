@@ -160,10 +160,13 @@ class TaskMenuApp:
         # Separator
         self.menu.addItem_(NSMenuItem.separatorItem())
 
-        # Quit item
+        # Quit item (with Cmd+Q keyboard shortcut)
         quit_item = NSMenuItem.alloc().initWithTitle_action_keyEquivalent_(
-            "Quit", self, "quit_app:"
+            "Quit Personal Assistant", self, "q"
         )
+        quit_item.setKeyEquivalentModifierMask_(0x100000)  # Cmd key
+        quit_item.setTarget_(self)
+        quit_item.setAction_("quit_app:")
         self.menu.addItem_(quit_item)
 
     def _build_summary_text(self) -> str:
