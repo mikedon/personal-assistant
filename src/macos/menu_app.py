@@ -4,6 +4,7 @@ Creates a status item in the macOS menu bar that shows the count of
 tasks due today or overdue, with a dropdown menu for quick access.
 """
 
+import signal
 import threading
 from typing import Any
 
@@ -242,6 +243,14 @@ class TaskMenuApp:
 
     def run(self) -> None:
         """Run the application main loop."""
+        # Set up signal handler for graceful shutdown
+        def signal_handler(sig, frame):
+            print("\n[Shutting down...]")
+            self.quit_app()
+
+        signal.signal(signal.SIGINT, signal_handler)
+        signal.signal(signal.SIGTERM, signal_handler)
+
         self.setup_menu_bar()
 
         # Initial fetch

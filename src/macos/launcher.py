@@ -121,8 +121,12 @@ def launch(
         start_api: Whether to start the API server if not running
         refresh_interval: How often to refresh task data (seconds)
     """
+    import signal
+
     print("🚀 Personal Assistant - macOS Menu Bar")
     print("-" * 40)
+
+    api_process = None
 
     # Check if API is running
     if check_api_running(api_url):
@@ -133,12 +137,28 @@ def launch(
 
         if not wait_for_api(api_url):
             print("✗ Failed to start API server")
-            api_process.terminate()
+            if api_process:
+                api_process.terminate()
             sys.exit(1)
     else:
         print(f"✗ API server is not running at {api_url}")
         print("  Start it manually or run with --start-api")
         sys.exit(1)
+
+    # Set up signal handler to cleanup API process on exit
+    def cleanup_handler(sig, frame):
+        if api_process:
+            print("\nStopping API server...")
+            api_process.terminate()
+            try:
+                api_process.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                api_process.kill()
+        sys.exit(0)
+
+    if api_process:
+        signal.signal(signal.SIGINT, cleanup_handler)
+        signal.signal(signal.SIGTERM, cleanup_handler)
 
     # Start menu bar app
     print("Starting menu bar application...")
@@ -146,7 +166,17 @@ def launch(
         start_menu_app(api_url=api_url, refresh_interval=refresh_interval)
     except RuntimeError as e:
         print(f"✗ Error: {e}")
+        if api_process:
+            api_process.terminate()
         sys.exit(1)
+    finally:
+        # Cleanup
+        if api_process:
+            api_process.terminate()
+            try:
+                api_process.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                api_process.kill()
 
 
 if __name__ == "__main__":
