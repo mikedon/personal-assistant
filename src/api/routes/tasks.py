@@ -126,6 +126,7 @@ def create_task(
         source_reference=task_data.source_reference,
         due_date=task_data.due_date,
         tags=task_data.tags,
+        initiative_id=task_data.initiative_id,
     )
     return _task_to_response(task)
 
@@ -149,6 +150,8 @@ def update_task(
         priority=task_data.priority,
         due_date=task_data.due_date,
         tags=task_data.tags,
+        initiative_id=task_data.initiative_id,
+        clear_initiative=task_data.clear_initiative,
     )
     return _task_to_response(task)
 
@@ -214,4 +217,6 @@ def _task_to_response(task: Task) -> TaskResponse:
         updated_at=task.updated_at,
         completed_at=task.completed_at,
         tags=task.get_tags_list(),
+        initiative_id=task.initiative_id,
+        initiative_title=task.initiative.title if task.initiative else None,
     )

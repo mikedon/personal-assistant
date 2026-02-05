@@ -48,6 +48,8 @@ def mock_task():
     task.created_at = datetime.now()
     task.updated_at = datetime.now()
     task.completed_at = None
+    task.initiative_id = None
+    task.initiative = None
     task.get_tags_list.return_value = ["urgent", "work"]
     return task
 
@@ -978,3 +980,233 @@ class TestTasksDueCommand:
             assert result.exit_code == 0
             assert "Could not parse date" in result.output
             assert "configure an LLM API key" in result.output
+
+
+class TestTasksMergeCommand:
+    """Tests for the tasks merge command."""
+
+    @patch("src.cli.init_db")
+    @patch("src.cli.load_config")
+    @patch("src.cli.get_config")
+    @patch("src.cli.get_db_session")
+    def test_tasks_merge_success(self, mock_session, mock_get_config, mock_load_config, mock_init_db, runner, mock_config):
+        """Test successful merge of multiple tasks."""
+        from datetime import datetime, timedelta
+        from src.models.task import TaskPriority
+
+        mock_load_config.return_value = mock_config
+        mock_get_config.return_value = mock_config
+
+        mock_db = MagicMock()
+        mock_session.return_value.__enter__ = MagicMock(return_value=mock_db)
+        mock_session.return_value.__exit__ = MagicMock(return_value=False)
+
+        # Create mock tasks with different priorities and due dates
+        task1 = MagicMock()
+        task1.id = 1
+        task1.title = "Fix login bug"
+        task1.description = "Users can't log in"
+        task1.priority = TaskPriority.HIGH
+        task1.due_date = datetime.now() + timedelta(days=3)
+        task1.get_tags_list.return_value = ["bug"]
+
+        task2 = MagicMock()
+        task2.id = 2
+        task2.title = "Fix password reset"
+        task2.description = "Reset emails not sent"
+        task2.priority = TaskPriority.CRITICAL  # Higher priority
+        task2.due_date = datetime.now() + timedelta(days=1)  # Earlier due date
+        task2.get_tags_list.return_value = ["bug", "urgent"]
+
+        merged_task = MagicMock()
+        merged_task.id = 10
+        merged_task.title = "Fix authentication issues"
+
+        with patch("src.cli.TaskService") as mock_service_class, \
+             patch("src.services.llm_service.LLMService") as mock_llm_class:
+            mock_service = MagicMock()
+            mock_service.get_task.side_effect = [task1, task2]
+            mock_service.create_task.return_value = merged_task
+            mock_service_class.return_value = mock_service
+
+            mock_llm = MagicMock()
+            mock_llm.merge_titles = AsyncMock(return_value="Fix authentication issues")
+            mock_llm_class.return_value = mock_llm
+
+            result = runner.invoke(cli, [
+                "tasks", "merge", "1", "2", "--yes"
+            ])
+
+            assert result.exit_code == 0
+            assert "Created merged task #10" in result.output
+            mock_service.create_task.assert_called_once()
+            # Original tasks should be deleted
+            assert mock_service.delete_task.call_count == 2
+
+    @patch("src.cli.init_db")
+    @patch("src.cli.load_config")
+    @patch("src.cli.get_config")
+    @patch("src.cli.get_db_session")
+    def test_tasks_merge_keep_originals(self, mock_session, mock_get_config, mock_load_config, mock_init_db, runner, mock_config):
+        """Test merge with --keep flag preserves original tasks."""
+        from src.models.task import TaskPriority
+
+        mock_load_config.return_value = mock_config
+        mock_get_config.return_value = mock_config
+
+        mock_db = MagicMock()
+        mock_session.return_value.__enter__ = MagicMock(return_value=mock_db)
+        mock_session.return_value.__exit__ = MagicMock(return_value=False)
+
+        task1 = MagicMock()
+        task1.id = 1
+        task1.title = "Task A"
+        task1.description = None
+        task1.priority = TaskPriority.MEDIUM
+        task1.due_date = None
+        task1.get_tags_list.return_value = []
+
+        task2 = MagicMock()
+        task2.id = 2
+        task2.title = "Task B"
+        task2.description = None
+        task2.priority = TaskPriority.MEDIUM
+        task2.due_date = None
+        task2.get_tags_list.return_value = []
+
+        merged_task = MagicMock()
+        merged_task.id = 10
+        merged_task.title = "Combined tasks"
+
+        with patch("src.cli.TaskService") as mock_service_class, \
+             patch("src.services.llm_service.LLMService") as mock_llm_class:
+            mock_service = MagicMock()
+            mock_service.get_task.side_effect = [task1, task2]
+            mock_service.create_task.return_value = merged_task
+            mock_service_class.return_value = mock_service
+
+            mock_llm = MagicMock()
+            mock_llm.merge_titles = AsyncMock(return_value="Combined tasks")
+            mock_llm_class.return_value = mock_llm
+
+            result = runner.invoke(cli, [
+                "tasks", "merge", "1", "2", "--keep", "--yes"
+            ])
+
+            assert result.exit_code == 0
+            assert "Created merged task" in result.output
+            # Original tasks should NOT be deleted
+            mock_service.delete_task.assert_not_called()
+
+    @patch("src.cli.init_db")
+    @patch("src.cli.load_config")
+    def test_tasks_merge_fewer_than_two(self, mock_load_config, mock_init_db, runner, mock_config):
+        """Test merge requires at least 2 task IDs."""
+        mock_load_config.return_value = mock_config
+
+        result = runner.invoke(cli, [
+            "tasks", "merge", "1"
+        ])
+
+        assert result.exit_code == 0
+        assert "at least 2 task IDs" in result.output
+
+    @patch("src.cli.init_db")
+    @patch("src.cli.load_config")
+    @patch("src.cli.get_config")
+    @patch("src.cli.get_db_session")
+    def test_tasks_merge_task_not_found(self, mock_session, mock_get_config, mock_load_config, mock_init_db, runner, mock_config):
+        """Test merge shows error when a task is not found."""
+        from src.models.task import TaskPriority
+
+        mock_load_config.return_value = mock_config
+        mock_get_config.return_value = mock_config
+
+        mock_db = MagicMock()
+        mock_session.return_value.__enter__ = MagicMock(return_value=mock_db)
+        mock_session.return_value.__exit__ = MagicMock(return_value=False)
+
+        task1 = MagicMock()
+        task1.id = 1
+        task1.title = "Existing task"
+        task1.priority = TaskPriority.MEDIUM
+
+        with patch("src.cli.TaskService") as mock_service_class:
+            mock_service = MagicMock()
+            # First task found, second not found
+            mock_service.get_task.side_effect = [task1, None]
+            mock_service_class.return_value = mock_service
+
+            result = runner.invoke(cli, [
+                "tasks", "merge", "1", "999"
+            ])
+
+            assert result.exit_code == 0
+            assert "Task #999 not found" in result.output
+
+    @patch("src.cli.init_db")
+    @patch("src.cli.load_config")
+    @patch("src.cli.get_config")
+    @patch("src.cli.get_db_session")
+    def test_tasks_merge_cancelled(self, mock_session, mock_get_config, mock_load_config, mock_init_db, runner, mock_config):
+        """Test merge cancellation when user declines confirmation."""
+        from src.models.task import TaskPriority
+
+        mock_load_config.return_value = mock_config
+        mock_get_config.return_value = mock_config
+
+        mock_db = MagicMock()
+        mock_session.return_value.__enter__ = MagicMock(return_value=mock_db)
+        mock_session.return_value.__exit__ = MagicMock(return_value=False)
+
+        task1 = MagicMock()
+        task1.id = 1
+        task1.title = "Task A"
+        task1.description = None
+        task1.priority = TaskPriority.MEDIUM
+        task1.due_date = None
+        task1.get_tags_list.return_value = []
+
+        task2 = MagicMock()
+        task2.id = 2
+        task2.title = "Task B"
+        task2.description = None
+        task2.priority = TaskPriority.MEDIUM
+        task2.due_date = None
+        task2.get_tags_list.return_value = []
+
+        with patch("src.cli.TaskService") as mock_service_class, \
+             patch("src.services.llm_service.LLMService") as mock_llm_class:
+            mock_service = MagicMock()
+            mock_service.get_task.side_effect = [task1, task2]
+            mock_service_class.return_value = mock_service
+
+            mock_llm = MagicMock()
+            mock_llm.merge_titles = AsyncMock(return_value="Combined")
+            mock_llm_class.return_value = mock_llm
+
+            # User types 'n' to decline
+            result = runner.invoke(cli, [
+                "tasks", "merge", "1", "2"
+            ], input="n\n")
+
+            assert result.exit_code == 0
+            assert "Cancelled" in result.output
+            mock_service.create_task.assert_not_called()
+
+    @patch("src.cli.init_db")
+    @patch("src.cli.load_config")
+    @patch("src.cli.get_config")
+    def test_tasks_merge_no_api_key(self, mock_get_config, mock_load_config, mock_init_db, runner):
+        """Test merge shows error when API key not configured."""
+        mock_config = MagicMock()
+        mock_config.llm.api_key = ""  # No API key
+        mock_load_config.return_value = mock_config
+        mock_get_config.return_value = mock_config
+
+        result = runner.invoke(cli, [
+            "tasks", "merge", "1", "2"
+        ])
+
+        assert result.exit_code == 0
+        assert "API key not configured" in result.output

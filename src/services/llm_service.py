@@ -41,6 +41,7 @@ class ExtractedTask:
     due_date: datetime | None = None
     tags: list[str] | None = None
     confidence: float = 0.5  # 0.0 to 1.0
+    suggested_initiative_id: int | None = None  # Suggested initiative to link to
 
 
 @dataclass
@@ -367,23 +368,32 @@ Suggest priority changes as JSON:"""
         self,
         tasks: list[dict[str, Any]],
         statistics: dict[str, Any] | None = None,
+        initiatives: list[dict[str, Any]] | None = None,
     ) -> list[ProductivityRecommendation]:
         """Generate productivity recommendations based on task state.
 
         Args:
             tasks: List of task dicts
             statistics: Optional task statistics dict
+            initiatives: Optional list of initiative dicts with progress
 
         Returns:
             List of productivity recommendations
         """
-        system_prompt = """You are a productivity assistant. Analyze the user's task list and statistics to provide actionable recommendations.
+        system_prompt = """You are a productivity assistant. Analyze the user's task list, statistics, and initiatives to provide actionable recommendations.
+
+Initiatives are longer-term projects that tasks roll up to. When providing recommendations, consider:
+- Progress toward active initiatives
+- Tasks that should be linked to initiatives
+- Initiatives that need more tasks or attention
+- Balance between different initiative priorities
 
 Categories:
 - focus: Help user focus on what matters most
 - scheduling: Suggestions for better time management
 - delegation: Tasks that could be delegated or deprioritized
 - organization: Ways to better organize and categorize work
+- initiative: Recommendations related to initiative progress
 
 Return a JSON array of 2-5 recommendations.
 
@@ -408,6 +418,20 @@ By priority: {statistics.get('by_priority', {})}
 By source: {statistics.get('by_source', {})}
 """
 
+        # Add initiatives section
+        if initiatives:
+            active_initiatives = [i for i in initiatives if i.get("status") == "active"]
+            if active_initiatives:
+                task_summary += f"\nActive initiatives ({len(active_initiatives)}):\n"
+                for i in active_initiatives:
+                    progress = i.get("progress", {})
+                    progress_pct = progress.get("progress_percent", 0)
+                    total = progress.get("total_tasks", 0)
+                    task_summary += f"- [{i.get('priority', 'medium')}] {i.get('title', 'Untitled')} - {progress_pct:.0f}% complete ({total} tasks)"
+                    if i.get("target_date"):
+                        task_summary += f" (target: {i['target_date'][:10]})"
+                    task_summary += "\n"
+
         # Add top priority tasks
         top_tasks = sorted(
             [t for t in tasks if t.get("status") not in ["completed", "cancelled"]],
@@ -421,6 +445,8 @@ By source: {statistics.get('by_source', {})}
                 task_summary += f"- [{t.get('priority', 'medium')}] {t.get('title', 'Untitled')}"
                 if t.get("due_date"):
                     task_summary += f" (due: {t['due_date']})"
+                if t.get("initiative"):
+                    task_summary += f" [Initiative: {t['initiative']}]"
                 task_summary += "\n"
 
         user_prompt = f"""Task Analysis:
@@ -624,6 +650,67 @@ Respond with ONLY the ISO datetime string, nothing else."""
         except Exception as e:
             logger.error(f"Date parsing failed: {e}")
             return None
+
+    async def merge_titles(self, titles: list[str]) -> str:
+        """Merge multiple task titles into a single unified title.
+
+        Args:
+            titles: List of task titles to merge.
+
+        Returns:
+            A single merged title that captures the essence of all tasks.
+        """
+        if len(titles) == 1:
+            return titles[0]
+
+        titles_list = "\n".join(f"- {title}" for title in titles)
+
+        system_prompt = """You are a task management assistant. Your job is to merge multiple task titles into a single, concise title.
+
+Rules:
+- Create a title that captures the common theme or essence of all tasks
+- Keep it concise (under 100 characters)
+- Use action-oriented language
+- If tasks are unrelated, find a higher-level grouping
+- Return ONLY the merged title, nothing else
+
+Examples:
+- "Review PR #123", "Review PR #456" -> "Review pending PRs"
+- "Email John about meeting", "Schedule call with John" -> "Coordinate with John"
+- "Fix login bug", "Fix password reset", "Fix session timeout" -> "Fix authentication issues"""
+
+        user_prompt = f"""Merge these task titles into one:
+{titles_list}
+
+Merged title:"""
+
+        try:
+            response = await self._call_llm(
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt},
+                ],
+                temperature=0.3,
+                max_tokens=100,
+                request_type="title_merge",
+            )
+
+            merged = response.content.strip()
+            # Remove quotes if present
+            if merged.startswith('"') and merged.endswith('"'):
+                merged = merged[1:-1]
+            if merged.startswith("'") and merged.endswith("'"):
+                merged = merged[1:-1]
+
+            logger.info(f"Merged {len(titles)} titles into: {merged}")
+            return merged
+
+        except LLMError:
+            raise
+        except Exception as e:
+            logger.error(f"Title merge failed: {e}")
+            # Fallback: return first title
+            return titles[0]
 
     def _parse_json_response(self, content: str) -> Any:
         """Parse JSON from LLM response, handling markdown code blocks.

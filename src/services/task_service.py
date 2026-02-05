@@ -6,6 +6,7 @@ from typing import Sequence
 from sqlalchemy import and_, func, or_
 from sqlalchemy.orm import Session
 
+from src.models.initiative import InitiativePriority, InitiativeStatus
 from src.models.task import Task, TaskPriority, TaskSource, TaskStatus
 
 
@@ -145,6 +146,7 @@ class TaskService:
         source_reference: str | None = None,
         due_date: datetime | None = None,
         tags: list[str] | None = None,
+        initiative_id: int | None = None,
     ) -> Task:
         """Create a new task with calculated priority score."""
         task = Task(
@@ -154,6 +156,7 @@ class TaskService:
             source=source,
             source_reference=source_reference,
             due_date=due_date,
+            initiative_id=initiative_id,
         )
         if tags:
             task.set_tags_list(tags)
@@ -176,8 +179,22 @@ class TaskService:
         priority: TaskPriority | None = None,
         due_date: datetime | None = None,
         tags: list[str] | None = None,
+        initiative_id: int | None = None,
+        clear_initiative: bool = False,
     ) -> Task:
-        """Update a task and recalculate priority score."""
+        """Update a task and recalculate priority score.
+
+        Args:
+            task: Task to update
+            title: New title
+            description: New description
+            status: New status
+            priority: New priority
+            due_date: New due date
+            tags: New tags list
+            initiative_id: Initiative to link task to
+            clear_initiative: If True, unlink task from any initiative
+        """
         if title is not None:
             task.title = title
         if description is not None:
@@ -192,6 +209,10 @@ class TaskService:
             task.due_date = due_date
         if tags is not None:
             task.set_tags_list(tags)
+        if clear_initiative:
+            task.initiative_id = None
+        elif initiative_id is not None:
+            task.initiative_id = initiative_id
 
         task.priority_score = self.calculate_priority_score(task)
 
@@ -370,6 +391,7 @@ class TaskService:
         - Task age: 0-15 points
         - Source importance: 0-10 points
         - Special tags: 0-10 points
+        - Initiative priority: 0-10 points
 
         Higher score = higher priority.
         """
@@ -452,6 +474,18 @@ class TaskService:
             score += 10
         elif any(tag.lower() in important_tags for tag in tags):
             score += 5
+
+        # 6. Initiative priority bonus (0-10 points)
+        # Tasks linked to active high-priority initiatives get a boost
+        if task.initiative_id and task.initiative:
+            initiative = task.initiative
+            if initiative.status == InitiativeStatus.ACTIVE:
+                initiative_scores = {
+                    InitiativePriority.HIGH: 10,
+                    InitiativePriority.MEDIUM: 5,
+                    InitiativePriority.LOW: 2,
+                }
+                score += initiative_scores.get(initiative.priority, 0)
 
         # Cap at 100
         return min(score, 100.0)

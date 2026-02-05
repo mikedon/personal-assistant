@@ -43,6 +43,8 @@ htmlcov/
 *.db
 *.sqlite
 *.sqlite3
+# Note: alembic/versions/ should be committed to track migrations
+# Only alembic/__pycache__/ should be ignored (covered by __pycache__ above)
 
 # Config with secrets
 config.yaml

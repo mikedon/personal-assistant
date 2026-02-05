@@ -39,7 +39,7 @@ def get_session_factory():
 def init_db() -> None:
     """Initialize the database by creating all tables."""
     # Import models to register them with Base
-    from src.models import task, notification, agent_log  # noqa: F401
+    from src.models import task, notification, agent_log, initiative  # noqa: F401
 
     Base.metadata.create_all(bind=get_engine())
 

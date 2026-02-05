@@ -319,3 +319,137 @@ def test_recalculate_priorities(client, sample_task_data):
 
     assert response.status_code == 200
     assert response.json()["updated_count"] == 2
+
+
+# Optional Initiatives Tests
+def test_create_task_without_initiative(client, sample_task_data):
+    """Test creating a task without an initiative."""
+    response = client.post("/api/tasks", json=sample_task_data)
+    assert response.status_code == 201
+
+    data = response.json()
+    assert data["initiative_id"] is None
+    assert data["initiative_title"] is None
+
+
+def test_create_task_with_initiative(client, test_db_session, sample_task_data):
+    """Test creating a task linked to an initiative."""
+    from src.models.initiative import Initiative, InitiativePriority
+
+    # Create an initiative directly
+    initiative = Initiative(
+        title="Test Project",
+        priority=InitiativePriority.HIGH,
+    )
+    test_db_session.add(initiative)
+    test_db_session.commit()
+
+    # Create task with initiative
+    task_data = {**sample_task_data, "initiative_id": initiative.id}
+    response = client.post("/api/tasks", json=task_data)
+    assert response.status_code == 201
+
+    data = response.json()
+    assert data["initiative_id"] == initiative.id
+    assert data["initiative_title"] == "Test Project"
+
+
+def test_list_tasks_without_initiatives(client, sample_task_data):
+    """Test listing tasks that don't have initiatives."""
+    # Create multiple tasks without initiatives
+    client.post("/api/tasks", json={**sample_task_data, "title": "Task 1"})
+    client.post("/api/tasks", json={**sample_task_data, "title": "Task 2"})
+    client.post("/api/tasks", json={**sample_task_data, "title": "Task 3"})
+
+    response = client.get("/api/tasks")
+    assert response.status_code == 200
+
+    data = response.json()
+    assert data["total"] >= 3
+    assert all(task["initiative_id"] is None for task in data["tasks"])
+
+
+def test_update_task_remove_initiative(client, test_db_session, sample_task_data):
+    """Test removing an initiative from a task."""
+    from src.models.initiative import Initiative, InitiativePriority
+
+    # Create an initiative
+    initiative = Initiative(
+        title="Project A",
+        priority=InitiativePriority.MEDIUM,
+    )
+    test_db_session.add(initiative)
+    test_db_session.commit()
+
+    # Create task with initiative
+    task_data = {**sample_task_data, "initiative_id": initiative.id}
+    create_resp = client.post("/api/tasks", json=task_data)
+    task_id = create_resp.json()["id"]
+
+    # Verify it has initiative
+    get_resp = client.get(f"/api/tasks/{task_id}")
+    assert get_resp.json()["initiative_id"] == initiative.id
+
+    # Remove initiative
+    update_resp = client.put(f"/api/tasks/{task_id}", json={"clear_initiative": True})
+    assert update_resp.status_code == 200
+    assert update_resp.json()["initiative_id"] is None
+
+
+def test_update_task_add_initiative(client, test_db_session, sample_task_data):
+    """Test adding an initiative to a task that didn't have one."""
+    from src.models.initiative import Initiative, InitiativePriority
+
+    # Create an initiative
+    initiative = Initiative(
+        title="Project B",
+        priority=InitiativePriority.HIGH,
+    )
+    test_db_session.add(initiative)
+    test_db_session.commit()
+
+    # Create task without initiative
+    create_resp = client.post("/api/tasks", json=sample_task_data)
+    task_id = create_resp.json()["id"]
+
+    # Verify it has no initiative
+    get_resp = client.get(f"/api/tasks/{task_id}")
+    assert get_resp.json()["initiative_id"] is None
+
+    # Add initiative
+    update_resp = client.put(f"/api/tasks/{task_id}", json={"initiative_id": initiative.id})
+    assert update_resp.status_code == 200
+    assert update_resp.json()["initiative_id"] == initiative.id
+    assert update_resp.json()["initiative_title"] == "Project B"
+
+
+def test_mixed_tasks_with_and_without_initiatives(client, test_db_session, sample_task_data):
+    """Test listing a mix of tasks with and without initiatives."""
+    from src.models.initiative import Initiative, InitiativePriority
+
+    # Create an initiative
+    initiative = Initiative(
+        title="Main Project",
+        priority=InitiativePriority.HIGH,
+    )
+    test_db_session.add(initiative)
+    test_db_session.commit()
+
+    # Create tasks both with and without initiatives
+    client.post("/api/tasks", json={**sample_task_data, "title": "Standalone 1"})
+    client.post("/api/tasks", json={**sample_task_data, "title": "Project Task", "initiative_id": initiative.id})
+    client.post("/api/tasks", json={**sample_task_data, "title": "Standalone 2"})
+
+    response = client.get("/api/tasks")
+    assert response.status_code == 200
+
+    data = response.json()
+    assert data["total"] >= 3
+
+    # Check mix of tasks
+    tasks_with_initiative = [t for t in data["tasks"] if t["initiative_id"] is not None]
+    tasks_without_initiative = [t for t in data["tasks"] if t["initiative_id"] is None]
+
+    assert len(tasks_with_initiative) >= 1
+    assert len(tasks_without_initiative) >= 2
+    assert tasks_with_initiative[0]["initiative_title"] == "Main Project"

@@ -4,6 +4,7 @@ from datetime import datetime
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from src.models.initiative import InitiativePriority, InitiativeStatus
 from src.models.task import TaskPriority, TaskSource, TaskStatus
 
 
@@ -23,6 +24,7 @@ class TaskCreate(TaskBase):
 
     source: TaskSource = TaskSource.MANUAL
     source_reference: str | None = None
+    initiative_id: int | None = None
 
 
 class TaskUpdate(BaseModel):
@@ -34,6 +36,8 @@ class TaskUpdate(BaseModel):
     priority: TaskPriority | None = None
     due_date: datetime | None = None
     tags: list[str] | None = None
+    initiative_id: int | None = None
+    clear_initiative: bool = False
 
 
 class TaskResponse(TaskBase):
@@ -49,6 +53,8 @@ class TaskResponse(TaskBase):
     created_at: datetime
     updated_at: datetime
     completed_at: datetime | None
+    initiative_id: int | None = None
+    initiative_title: str | None = None
 
 
 class TaskListResponse(BaseModel):
@@ -132,3 +138,61 @@ class VoiceTaskResponse(BaseModel):
     transcription: str
     task: "TaskResponse | None" = None
     extracted_tasks_count: int = 0
+
+
+# Initiative Schemas
+class InitiativeBase(BaseModel):
+    """Base schema for initiative data."""
+
+    title: str = Field(..., min_length=1, max_length=500)
+    description: str | None = None
+    priority: InitiativePriority = InitiativePriority.MEDIUM
+    target_date: datetime | None = None
+
+
+class InitiativeCreate(InitiativeBase):
+    """Schema for creating a new initiative."""
+
+    pass
+
+
+class InitiativeUpdate(BaseModel):
+    """Schema for updating an initiative."""
+
+    title: str | None = Field(default=None, min_length=1, max_length=500)
+    description: str | None = None
+    status: InitiativeStatus | None = None
+    priority: InitiativePriority | None = None
+    target_date: datetime | None = None
+
+
+class InitiativeResponse(InitiativeBase):
+    """Schema for initiative response."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    status: InitiativeStatus
+    created_at: datetime
+    updated_at: datetime
+
+
+class InitiativeProgressResponse(BaseModel):
+    """Schema for initiative with progress."""
+
+    initiative: InitiativeResponse
+    progress: dict
+
+
+class InitiativeWithTasksResponse(InitiativeResponse):
+    """Schema for initiative with linked tasks."""
+
+    tasks: list[TaskResponse] = Field(default_factory=list)
+    progress: dict
+
+
+class InitiativeListResponse(BaseModel):
+    """Schema for list of initiatives response."""
+
+    initiatives: list[InitiativeProgressResponse]
+    total: int

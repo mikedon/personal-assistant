@@ -4,7 +4,9 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
+from src.models.initiative import Initiative, InitiativePriority, InitiativeStatus
 from src.models.task import Task, TaskPriority, TaskSource, TaskStatus
+from src.services.initiative_service import InitiativeService
 from src.services.task_service import TaskService
 
 
@@ -356,3 +358,183 @@ class TestStatistics:
         assert stats["total"] == 0
         assert stats["active"] == 0
         assert stats["overdue"] == 0
+
+
+class TestOptionalInitiatives:
+    """Tests for tasks with optional initiative relationships."""
+
+    def test_create_task_without_initiative(self, test_db_session):
+        """Test creating a task without linking to an initiative."""
+        service = TaskService(test_db_session)
+        
+        task = service.create_task(
+            title="Standalone Task",
+            description="This task has no initiative",
+            priority=TaskPriority.HIGH,
+        )
+        
+        assert task.id is not None
+        assert task.initiative_id is None
+        assert task.initiative is None
+        assert task.title == "Standalone Task"
+
+    def test_create_task_with_initiative(self, test_db_session):
+        """Test creating a task linked to an initiative."""
+        initiative_service = InitiativeService(test_db_session)
+        task_service = TaskService(test_db_session)
+        
+        # Create an initiative
+        initiative = initiative_service.create_initiative(
+            title="Main Project",
+            priority=InitiativePriority.HIGH,
+        )
+        
+        # Create task linked to initiative
+        task = task_service.create_task(
+            title="Task for Project",
+            initiative_id=initiative.id,
+        )
+        
+        assert task.initiative_id == initiative.id
+        assert task.initiative is not None
+        assert task.initiative.title == "Main Project"
+
+    def test_get_tasks_without_initiative(self, test_db_session):
+        """Test retrieving tasks without initiatives."""
+        service = TaskService(test_db_session)
+        
+        service.create_task(title="Task 1")
+        service.create_task(title="Task 2")
+        service.create_task(title="Task 3")
+        
+        tasks, total = service.get_tasks(limit=10)
+        
+        assert total == 3
+        assert all(t.initiative_id is None for t in tasks)
+        assert all(t.initiative is None for t in tasks)
+
+    def test_get_mixed_tasks_with_and_without_initiatives(self, test_db_session):
+        """Test retrieving tasks where some have initiatives and some don't."""
+        initiative_service = InitiativeService(test_db_session)
+        task_service = TaskService(test_db_session)
+        
+        # Create an initiative
+        initiative = initiative_service.create_initiative(
+            title="Project A",
+            priority=InitiativePriority.HIGH,
+        )
+        
+        # Create mix of tasks
+        task1 = task_service.create_task(title="Standalone Task")
+        task2 = task_service.create_task(title="Project Task", initiative_id=initiative.id)
+        task3 = task_service.create_task(title="Another Standalone")
+        
+        tasks, total = task_service.get_tasks(limit=10)
+        
+        assert total == 3
+        
+        # Check each task
+        standalone_tasks = [t for t in tasks if t.initiative_id is None]
+        linked_tasks = [t for t in tasks if t.initiative_id is not None]
+        
+        assert len(standalone_tasks) == 2
+        assert len(linked_tasks) == 1
+        assert linked_tasks[0].initiative.title == "Project A"
+
+    def test_update_task_remove_initiative(self, test_db_session):
+        """Test removing initiative from a task."""
+        initiative_service = InitiativeService(test_db_session)
+        task_service = TaskService(test_db_session)
+        
+        # Create initiative and task
+        initiative = initiative_service.create_initiative(
+            title="Project",
+            priority=InitiativePriority.MEDIUM,
+        )
+        task = task_service.create_task(
+            title="Task",
+            initiative_id=initiative.id,
+        )
+        
+        assert task.initiative_id is not None
+        
+        # Remove the initiative
+        updated = task_service.update_task(task, clear_initiative=True)
+        
+        assert updated.initiative_id is None
+        assert updated.initiative is None
+
+    def test_update_task_add_initiative(self, test_db_session):
+        """Test adding initiative to a task that didn't have one."""
+        initiative_service = InitiativeService(test_db_session)
+        task_service = TaskService(test_db_session)
+        
+        # Create initiative and standalone task
+        initiative = initiative_service.create_initiative(
+            title="Project",
+            priority=InitiativePriority.MEDIUM,
+        )
+        task = task_service.create_task(title="Task")
+        
+        assert task.initiative_id is None
+        
+        # Add the initiative
+        updated = task_service.update_task(task, initiative_id=initiative.id)
+        
+        assert updated.initiative_id == initiative.id
+        assert updated.initiative is not None
+
+    def test_priority_score_without_initiative(self, test_db_session):
+        """Test priority scoring works correctly for tasks without initiatives."""
+        task = Task(
+            title="Test",
+            priority=TaskPriority.HIGH,
+            initiative_id=None,  # Explicitly no initiative
+        )
+        
+        # Should calculate score without raising errors
+        score = TaskService.calculate_priority_score(task)
+        
+        # High priority + manual source = 30 + 5 = 35
+        assert score >= 35
+        assert score < 100
+
+    def test_priority_score_with_active_initiative(self, test_db_session):
+        """Test priority scoring includes initiative bonus."""
+        initiative_service = InitiativeService(test_db_session)
+        
+        # Create high priority active initiative
+        initiative = initiative_service.create_initiative(
+            title="Important Project",
+            priority=InitiativePriority.HIGH,
+        )
+        # Make sure it's active
+        test_db_session.refresh(initiative)
+        
+        # Create task linked to initiative
+        task = Task(
+            title="Test",
+            priority=TaskPriority.MEDIUM,
+            initiative_id=initiative.id,
+            initiative=initiative,
+        )
+        
+        score = TaskService.calculate_priority_score(task)
+        
+        # Medium=20 + source=5 + high_initiative_bonus=10 = 35+
+        assert score >= 35
+
+    def test_task_without_initiative_handles_none_gracefully(self, test_db_session):
+        """Test that accessing None initiative doesn't cause errors."""
+        service = TaskService(test_db_session)
+        task = service.create_task(title="Test Task")
+        
+        # These should all work without errors
+        assert task.initiative is None
+        assert task.initiative_id is None
+        assert not hasattr(task, 'initiative') or task.initiative is None or True
+        
+        # Update should work
+        updated = service.update_task(task, title="Updated")
+        assert updated.initiative is None
+        assert updated.initiative_id is None

@@ -24,7 +24,9 @@ from rich.text import Text
 from src import __version__
 from src.models import init_db
 from src.models.database import get_db_session
+from src.models.initiative import InitiativePriority, InitiativeStatus
 from src.models.task import TaskPriority, TaskSource, TaskStatus
+from src.services.initiative_service import InitiativeService
 from src.services.task_service import TaskService
 from src.utils.config import get_config, load_config
 
@@ -497,9 +499,10 @@ def tasks():
               help="Filter by status")
 @click.option("--priority", "-p", type=click.Choice([p.value for p in TaskPriority]),
               help="Filter by priority")
+@click.option("--initiative", "-i", type=int, help="Filter by initiative ID")
 @click.option("--all", "-a", "show_all", is_flag=True, help="Include completed tasks")
 @click.option("--limit", "-n", default=20, help="Number of tasks to show")
-def tasks_list(status, priority, show_all, limit):
+def tasks_list(status, priority, initiative, show_all, limit):
     """List tasks."""
     with get_db_session() as db:
         service = TaskService(db)
@@ -515,6 +518,11 @@ def tasks_list(status, priority, show_all, limit):
             limit=limit,
         )
 
+        # Filter by initiative if specified
+        if initiative is not None:
+            tasks = [t for t in tasks if t.initiative_id == initiative]
+            total = len(tasks)
+
         if not tasks:
             console.print("[dim]No tasks found.[/dim]")
             return
@@ -522,10 +530,10 @@ def tasks_list(status, priority, show_all, limit):
         table = Table(title=f"Tasks ({len(tasks)} of {total})")
         table.add_column("ID", style="dim", width=4)
         table.add_column("Pri", width=3)
-        table.add_column("Title", style="white", min_width=20, max_width=50)
+        table.add_column("Title", style="white", min_width=20, max_width=40)
         table.add_column("Status", width=12)
         table.add_column("Due", width=15)
-        table.add_column("Source", style="dim", width=8)
+        table.add_column("Initiative", style="cyan", width=15)
 
         for task in tasks:
             pri_style = get_priority_style(task.priority)
@@ -534,14 +542,15 @@ def tasks_list(status, priority, show_all, limit):
                 task.priority.value, "⚪"
             )
 
-            title_text = task.title[:50] if task.title else "(no title)"
+            title_text = task.title[:40] if task.title else "(no title)"
+            initiative_text = task.initiative.title[:15] if task.initiative else "-"
             table.add_row(
                 str(task.id),
                 pri_emoji,
                 f"[{pri_style}]{title_text}[/{pri_style}]",
                 Text(task.status.value, style=status_style),
                 format_due_date(task.due_date),
-                task.source.value[:8],
+                initiative_text,
             )
 
         console.print(table)
@@ -554,7 +563,8 @@ def tasks_list(status, priority, show_all, limit):
               default="medium", help="Priority level")
 @click.option("--due", "-D", help="Due date (YYYY-MM-DD or 'tomorrow', '+3d')")
 @click.option("--tags", "-t", multiple=True, help="Tags (can specify multiple)")
-def tasks_add(title, description, priority, due, tags):
+@click.option("--initiative", "-i", type=int, help="Link to initiative by ID")
+def tasks_add(title, description, priority, due, tags, initiative):
     """Add a new task."""
     # Parse due date
     due_date = None
@@ -566,6 +576,14 @@ def tasks_add(title, description, priority, due, tags):
 
     with get_db_session() as db:
         service = TaskService(db)
+
+        # Validate initiative if provided
+        if initiative:
+            initiative_service = InitiativeService(db)
+            if not initiative_service.get_initiative(initiative):
+                console.print(f"[red]Initiative #{initiative} not found.[/red]")
+                return
+
         task = service.create_task(
             title=title,
             description=description,
@@ -573,9 +591,12 @@ def tasks_add(title, description, priority, due, tags):
             source=TaskSource.MANUAL,
             due_date=due_date,
             tags=list(tags) if tags else None,
+            initiative_id=initiative,
         )
 
         console.print(f"[green]✓[/green] Created task #{task.id}: {task.title}")
+        if task.initiative:
+            console.print(f"  [cyan]Initiative:[/cyan] {task.initiative.title}")
 
 
 @tasks.command("complete")
@@ -636,6 +657,9 @@ def tasks_show(task_id):
             f"Score: {task.priority_score:.1f}",
             f"Source: {task.source.value}",
         ]
+
+        if task.initiative:
+            info_lines.append(f"Initiative: [cyan]{task.initiative.title}[/cyan] (#{task.initiative.id})")
 
         if task.description:
             info_lines.extend(["", f"Description: {task.description}"])
@@ -808,6 +832,137 @@ def tasks_due(task_id, date, yes, clear):
         # Update the task
         service.update_task(task, due_date=new_due_date)
         console.print(f"[green]✓[/green] Updated due date for task #{task_id}")
+
+
+@tasks.command("merge")
+@click.argument("task_ids", type=int, nargs=-1, required=True)
+@click.option("--yes", "-y", is_flag=True, help="Skip confirmation prompt")
+@click.option("--keep", "-k", is_flag=True, help="Keep original tasks instead of deleting them")
+def tasks_merge(task_ids, yes, keep):
+    """Merge multiple tasks into a single task.
+
+    Combines tasks using AI to create a unified title, takes the highest
+    priority, earliest due date, and merges descriptions and tags.
+
+    Examples:
+
+        pa tasks merge 1 2 3
+
+        pa tasks merge 5 6 --keep
+
+        pa tasks merge 10 11 12 --yes
+    """
+    from src.services.llm_service import LLMService, LLMError
+
+    # Validate at least 2 tasks
+    if len(task_ids) < 2:
+        console.print("[red]Please provide at least 2 task IDs to merge.[/red]")
+        return
+
+    config = get_config()
+
+    # Check if LLM is configured
+    if not config.llm.api_key:
+        console.print("[red]LLM API key not configured.[/red]")
+        console.print("[dim]Set llm.api_key in config.yaml or PA_LLM__API_KEY env var.[/dim]")
+        return
+
+    with get_db_session() as db:
+        service = TaskService(db)
+
+        # Fetch all tasks
+        tasks_to_merge = []
+        for task_id in task_ids:
+            task = service.get_task(task_id)
+            if not task:
+                console.print(f"[red]Task #{task_id} not found.[/red]")
+                return
+            tasks_to_merge.append(task)
+
+        # Display tasks being merged
+        console.print("\n[bold]Tasks to merge:[/bold]")
+        for task in tasks_to_merge:
+            pri_emoji = {"critical": "🔴", "high": "🟠", "medium": "🟡", "low": "🟢"}.get(
+                task.priority.value, "⚪"
+            )
+            due_str = f" - {format_due_date(task.due_date)}" if task.due_date else ""
+            console.print(f"  #{task.id}: {pri_emoji} {task.title}{due_str}")
+
+        # Use LLM to merge titles
+        llm_service = LLMService(config.llm)
+        titles = [task.title for task in tasks_to_merge]
+
+        try:
+            with Progress(
+                SpinnerColumn(),
+                TextColumn("[progress.description]{task.description}"),
+                console=console,
+            ) as progress:
+                progress.add_task("Merging titles...", total=None)
+                merged_title = run_async(llm_service.merge_titles(titles))
+        except LLMError as e:
+            console.print(f"[red]LLM error: {e}[/red]")
+            return
+
+        # Determine highest priority (CRITICAL > HIGH > MEDIUM > LOW)
+        priority_order = [TaskPriority.CRITICAL, TaskPriority.HIGH, TaskPriority.MEDIUM, TaskPriority.LOW]
+        highest_priority = TaskPriority.LOW
+        for task in tasks_to_merge:
+            if priority_order.index(task.priority) < priority_order.index(highest_priority):
+                highest_priority = task.priority
+
+        # Determine earliest due date (ignoring None)
+        due_dates = [task.due_date for task in tasks_to_merge if task.due_date]
+        earliest_due = min(due_dates) if due_dates else None
+
+        # Combine descriptions (newline separated, skip None/empty)
+        descriptions = [task.description for task in tasks_to_merge if task.description]
+        merged_description = "\n\n".join(descriptions) if descriptions else None
+
+        # Combine tags (deduplicated)
+        all_tags = set()
+        for task in tasks_to_merge:
+            all_tags.update(task.get_tags_list())
+        merged_tags = list(all_tags) if all_tags else None
+
+        # Show preview
+        pri_emoji = {"critical": "🔴", "high": "🟠", "medium": "🟡", "low": "🟢"}.get(
+            highest_priority.value, "⚪"
+        )
+        console.print("\n[bold]Merged task preview:[/bold]")
+        console.print(f"  Title: {merged_title}")
+        console.print(f"  Priority: {pri_emoji} {highest_priority.value}")
+        console.print(f"  Due: {format_due_date(earliest_due) if earliest_due else '[dim]None[/dim]'}")
+        if merged_tags:
+            console.print(f"  Tags: {', '.join(f'#{t}' for t in merged_tags)}")
+        if not keep:
+            console.print("\n[dim]Original tasks will be deleted.[/dim]")
+        else:
+            console.print("\n[dim]Original tasks will be kept.[/dim]")
+
+        # Confirm unless --yes
+        if not yes:
+            if not click.confirm("\nCreate merged task?", default=True):
+                console.print("[dim]Cancelled.[/dim]")
+                return
+
+        # Create merged task
+        merged_task = service.create_task(
+            title=merged_title,
+            description=merged_description,
+            priority=highest_priority,
+            source=TaskSource.MANUAL,
+            due_date=earliest_due,
+            tags=merged_tags,
+        )
+
+        console.print(f"\n[green]✓[/green] Created merged task #{merged_task.id}: {merged_title}")
+
+        # Delete original tasks unless --keep
+        if not keep:
+            for task in tasks_to_merge:
+                service.delete_task(task)
+            console.print(f"[dim]Deleted {len(tasks_to_merge)} original tasks.[/dim]")
 
 
 @tasks.command("voice")
@@ -1098,21 +1253,210 @@ def tasks_parse(text, dry_run, yes):
         console.print(f"[red]Unexpected error: {e}[/red]")
 
 
+# --- Initiatives Commands ---
+
+
+@cli.group()
+def initiatives():
+    """Initiative management commands."""
+    pass
+
+
+@initiatives.command("list")
+@click.option("--all", "-a", "show_all", is_flag=True, help="Include completed initiatives")
+@click.option("--priority", "-p", type=click.Choice([p.value for p in InitiativePriority]),
+              help="Filter by priority")
+def initiatives_list(show_all, priority):
+    """List initiatives."""
+    with get_db_session() as db:
+        service = InitiativeService(db)
+
+        priority_filter = InitiativePriority(priority) if priority else None
+        initiatives_data = service.get_initiatives_with_progress(
+            include_completed=show_all
+        )
+
+        # Filter by priority if specified
+        if priority_filter:
+            initiatives_data = [
+                item for item in initiatives_data
+                if item["initiative"].priority == priority_filter
+            ]
+
+        if not initiatives_data:
+            console.print("[dim]No initiatives found.[/dim]")
+            return
+
+        table = Table(title=f"Initiatives ({len(initiatives_data)})")
+        table.add_column("ID", style="dim", width=4)
+        table.add_column("Pri", width=3)
+        table.add_column("Title", style="white", min_width=20, max_width=40)
+        table.add_column("Status", width=10)
+        table.add_column("Progress", width=12)
+        table.add_column("Target", width=12)
+
+        for item in initiatives_data:
+            initiative = item["initiative"]
+            progress = item["progress"]
+
+            pri_emoji = {"high": "🔴", "medium": "🟡", "low": "🟢"}.get(
+                initiative.priority.value, "⚪"
+            )
+
+            status_style = {
+                InitiativeStatus.ACTIVE: "green",
+                InitiativeStatus.PAUSED: "yellow",
+                InitiativeStatus.COMPLETED: "dim",
+            }.get(initiative.status, "white")
+
+            progress_pct = progress["progress_percent"]
+            progress_str = f"{progress_pct:.0f}% ({progress['completed_tasks']}/{progress['total_tasks']})"
+
+            target_str = initiative.target_date.strftime("%Y-%m-%d") if initiative.target_date else "-"
+
+            table.add_row(
+                str(initiative.id),
+                pri_emoji,
+                initiative.title[:40],
+                Text(initiative.status.value, style=status_style),
+                progress_str,
+                target_str,
+            )
+
+        console.print(table)
+
+
+@initiatives.command("add")
+@click.argument("title")
+@click.option("--description", "-d", help="Initiative description")
+@click.option("--priority", "-p", type=click.Choice([p.value for p in InitiativePriority]),
+              default="medium", help="Priority level")
+@click.option("--target", "-t", help="Target date (YYYY-MM-DD)")
+def initiatives_add(title, description, priority, target):
+    """Add a new initiative."""
+    # Parse target date
+    target_date = None
+    if target:
+        target_date = parse_due_date(target)
+        if not target_date:
+            console.print(f"[red]Invalid target date format: {target}[/red]")
+            return
+
+    with get_db_session() as db:
+        service = InitiativeService(db)
+        initiative = service.create_initiative(
+            title=title,
+            description=description,
+            priority=InitiativePriority(priority),
+            target_date=target_date,
+        )
+
+        console.print(f"[green]✓[/green] Created initiative #{initiative.id}: {initiative.title}")
+
+
+@initiatives.command("show")
+@click.argument("initiative_id", type=int)
+def initiatives_show(initiative_id):
+    """Show initiative details."""
+    with get_db_session() as db:
+        service = InitiativeService(db)
+        initiative = service.get_initiative(initiative_id)
+
+        if not initiative:
+            console.print(f"[red]Initiative #{initiative_id} not found.[/red]")
+            return
+
+        progress = service.get_initiative_progress(initiative_id)
+        tasks = service.get_tasks_for_initiative(initiative_id, include_completed=False)
+
+        pri_emoji = {"high": "🔴", "medium": "🟡", "low": "🟢"}.get(
+            initiative.priority.value, "⚪"
+        )
+
+        info_lines = [
+            f"[bold]{pri_emoji} {initiative.title}[/bold]",
+            "",
+            f"Status: {initiative.status.value}",
+            f"Priority: {initiative.priority.value}",
+            f"Progress: {progress['progress_percent']:.0f}% ({progress['completed_tasks']}/{progress['total_tasks']} tasks)",
+        ]
+
+        if initiative.target_date:
+            info_lines.append(f"Target: {format_due_date(initiative.target_date)}")
+
+        if initiative.description:
+            info_lines.extend(["", f"Description: {initiative.description}"])
+
+        info_lines.extend([
+            "",
+            f"Created: {initiative.created_at.strftime('%Y-%m-%d %H:%M')}",
+        ])
+
+        console.print(Panel("\n".join(info_lines), title=f"Initiative #{initiative.id}"))
+
+        # Show linked tasks
+        if tasks:
+            console.print(f"\n[bold]Active Tasks ({len(tasks)}):[/bold]")
+            for task in tasks[:10]:
+                pri_emoji = {"critical": "🔴", "high": "🟠", "medium": "🟡", "low": "🟢"}.get(
+                    task.priority.value, "⚪"
+                )
+                console.print(f"  {pri_emoji} #{task.id} {task.title[:50]}")
+            if len(tasks) > 10:
+                console.print(f"  [dim]... and {len(tasks) - 10} more[/dim]")
+
+
+@initiatives.command("complete")
+@click.argument("initiative_id", type=int)
+def initiatives_complete(initiative_id):
+    """Mark an initiative as completed."""
+    with get_db_session() as db:
+        service = InitiativeService(db)
+        initiative = service.get_initiative(initiative_id)
+
+        if not initiative:
+            console.print(f"[red]Initiative #{initiative_id} not found.[/red]")
+            return
+
+        service.update_initiative(initiative, status=InitiativeStatus.COMPLETED)
+        console.print(f"[green]✓[/green] Completed initiative #{initiative_id}: {initiative.title}")
+
+
+@initiatives.command("delete")
+@click.argument("initiative_id", type=int)
+@click.option("--yes", "-y", is_flag=True, help="Skip confirmation")
+def initiatives_delete(initiative_id, yes):
+    """Delete an initiative."""
+    with get_db_session() as db:
+        service = InitiativeService(db)
+        initiative = service.get_initiative(initiative_id)
+
+        if not initiative:
+            console.print(f"[red]Initiative #{initiative_id} not found.[/red]")
+            return
+
+        if not yes:
+            if not click.confirm(f"Delete initiative '{initiative.title}'? Tasks will be unlinked."):
+                return
+
+        service.delete_initiative(initiative)
+        console.print(f"[green]✓[/green] Deleted initiative #{initiative_id}")
+
+
 # --- Summary Command ---
 
 
 @cli.command()
 def summary():
     """Show daily summary and recommendations."""
-    from src.services.recommendation_service import RecommendationService
-
-    config = get_config()
-
     with get_db_session() as db:
-        service = TaskService(db)
-        stats = service.get_statistics()
-        top_tasks = service.get_prioritized_tasks(limit=5)
-        overdue = service.get_overdue_tasks()
+        task_service = TaskService(db)
+        initiative_service = InitiativeService(db)
+
+        stats = task_service.get_statistics()
+        top_tasks = task_service.get_prioritized_tasks(limit=5)
+        overdue = task_service.get_overdue_tasks()
+        initiatives_data = initiative_service.get_initiatives_with_progress(include_completed=False)
 
         # Header
         console.print(Panel(
@@ -1126,6 +1470,21 @@ def summary():
         console.print(f"  ⚠️  Overdue: [red]{stats['overdue']}[/red]")
         console.print(f"  📅 Due Today: [yellow]{stats['due_today']}[/yellow]")
         console.print(f"  📆 Due This Week: [cyan]{stats['due_this_week']}[/cyan]")
+        console.print(f"  🎯 Active Initiatives: [cyan]{len(initiatives_data)}[/cyan]")
+
+        # Active initiatives
+        if initiatives_data:
+            console.print("\n[bold]Active Initiatives:[/bold]")
+            for item in initiatives_data[:5]:
+                initiative = item["initiative"]
+                progress = item["progress"]
+                pri_emoji = {"high": "🔴", "medium": "🟡", "low": "🟢"}.get(
+                    initiative.priority.value, "⚪"
+                )
+                console.print(
+                    f"  {pri_emoji} {initiative.title[:40]} - "
+                    f"[cyan]{progress['progress_percent']:.0f}%[/cyan]"
+                )
 
         # Top priorities
         if top_tasks:
@@ -1134,7 +1493,8 @@ def summary():
                 pri_emoji = {"critical": "🔴", "high": "🟠", "medium": "🟡", "low": "🟢"}.get(
                     task.priority.value, "⚪"
                 )
-                console.print(f"  {i}. {pri_emoji} {task.title[:60]}")
+                initiative_str = f" [{task.initiative.title[:15]}]" if task.initiative else ""
+                console.print(f"  {i}. {pri_emoji} {task.title[:50]}{initiative_str}")
 
         # Overdue warning
         if overdue:

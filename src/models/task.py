@@ -3,8 +3,8 @@
 import enum
 from datetime import datetime
 
-from sqlalchemy import DateTime, Enum, Float, Integer, String, Text, func
-from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy import DateTime, Enum, Float, ForeignKey, Integer, String, Text, func
+from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from src.models.database import Base
 
@@ -77,6 +77,14 @@ class Task(Base):
 
     # Tags for categorization (stored as comma-separated string)
     tags: Mapped[str | None] = mapped_column(String(500), nullable=True)
+
+    # Initiative relationship (optional - task can belong to an initiative)
+    initiative_id: Mapped[int | None] = mapped_column(
+        Integer, ForeignKey("initiatives.id", ondelete="SET NULL"), nullable=True
+    )
+    initiative: Mapped["Initiative | None"] = relationship(
+        "Initiative", back_populates="tasks"
+    )
 
     def __repr__(self) -> str:
         return f"<Task(id={self.id}, title='{self.title[:30]}...', status={self.status.value})>"

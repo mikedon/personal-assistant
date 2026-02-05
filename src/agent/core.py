@@ -22,6 +22,7 @@ from src.integrations.manager import IntegrationManager
 from src.models.database import get_db_session
 from src.models.task import TaskPriority, TaskSource
 from src.services.agent_log_service import AgentLogService
+from src.services.initiative_service import InitiativeService
 from src.services.llm_service import ExtractedTask, HttpLogCallback, LLMError, LLMService, ProductivityRecommendation
 from src.services.pending_suggestion_service import PendingSuggestionService
 from src.services.task_service import TaskService
@@ -719,10 +720,16 @@ class AutonomousAgent:
         try:
             with get_db_session() as db:
                 task_service = TaskService(db)
+                initiative_service = InitiativeService(db)
 
                 # Get tasks and statistics
                 tasks, _ = task_service.get_tasks(include_completed=False, limit=50)
                 statistics = task_service.get_statistics()
+
+                # Get active initiatives with progress
+                initiatives_with_progress = initiative_service.get_initiatives_with_progress(
+                    include_completed=False
+                )
 
                 # Convert tasks to dicts for LLM
                 task_dicts = [
@@ -736,14 +743,30 @@ class AutonomousAgent:
                         "due_date": t.due_date.isoformat() if t.due_date else None,
                         "source": t.source.value,
                         "tags": t.get_tags_list(),
+                        "initiative": t.initiative.title if t.initiative else None,
                     }
                     for t in tasks
                 ]
 
-            # Generate recommendations
+                # Convert initiatives to dicts for LLM
+                initiative_dicts = [
+                    {
+                        "id": item["initiative"].id,
+                        "title": item["initiative"].title,
+                        "description": item["initiative"].description,
+                        "priority": item["initiative"].priority.value,
+                        "status": item["initiative"].status.value,
+                        "target_date": item["initiative"].target_date.isoformat() if item["initiative"].target_date else None,
+                        "progress": item["progress"],
+                    }
+                    for item in initiatives_with_progress
+                ]
+
+            # Generate recommendations with initiative context
             recommendations = await self.llm_service.generate_recommendations(
                 tasks=task_dicts,
                 statistics=statistics,
+                initiatives=initiative_dicts,
             )
 
             # Store pending recommendations
@@ -752,7 +775,9 @@ class AutonomousAgent:
 
             # Generate summary document if configured
             output_path = Path(self.agent_config.output_document_path).expanduser()
-            await self._write_summary_document(output_path, task_dicts, statistics, recommendations)
+            await self._write_summary_document(
+                output_path, task_dicts, statistics, recommendations, initiative_dicts
+            )
 
             logger.info(f"Generated {len(recommendations)} recommendations")
             return recommendations
@@ -819,6 +844,7 @@ class AutonomousAgent:
         tasks: list[dict[str, Any]],
         statistics: dict[str, Any],
         recommendations: list[ProductivityRecommendation],
+        initiatives: list[dict[str, Any]] | None = None,
     ) -> None:
         """Write a markdown summary document.
 
@@ -827,6 +853,7 @@ class AutonomousAgent:
             tasks: List of task dicts
             statistics: Task statistics
             recommendations: List of recommendations
+            initiatives: List of initiative dicts with progress
         """
         try:
             # Log directory creation if needed
@@ -853,10 +880,36 @@ class AutonomousAgent:
 - **Overdue:** {statistics.get('overdue', 0)}
 - **Due Today:** {statistics.get('due_today', 0)}
 - **Due This Week:** {statistics.get('due_this_week', 0)}
-
-## Top Priority Tasks
+- **Active Initiatives:** {len([i for i in (initiatives or []) if i.get('status') == 'active'])}
 
 """
+
+            # Add initiatives section
+            if initiatives:
+                active_initiatives = [i for i in initiatives if i.get("status") == "active"]
+                if active_initiatives:
+                    content += "## Active Initiatives\n\n"
+                    for initiative in active_initiatives:
+                        priority_emoji = {
+                            "high": "🔴",
+                            "medium": "🟡",
+                            "low": "🟢",
+                        }.get(initiative.get("priority", "medium"), "⚪")
+
+                        progress = initiative.get("progress", {})
+                        progress_pct = progress.get("progress_percent", 0)
+                        total_tasks = progress.get("total_tasks", 0)
+                        completed_tasks = progress.get("completed_tasks", 0)
+
+                        content += f"### {priority_emoji} {initiative['title']}\n"
+                        content += f"Progress: **{progress_pct:.0f}%** ({completed_tasks}/{total_tasks} tasks)\n"
+                        if initiative.get("target_date"):
+                            content += f"Target: {initiative['target_date'][:10]}\n"
+                        if initiative.get("description"):
+                            content += f"\n{initiative['description'][:200]}{'...' if len(initiative.get('description', '')) > 200 else ''}\n"
+                        content += "\n"
+
+            content += "## Top Priority Tasks\n\n"
             # Add top 10 tasks
             top_tasks = sorted(
                 [t for t in tasks if t.get("status") not in ["completed", "cancelled"]],
