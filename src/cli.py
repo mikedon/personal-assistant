@@ -1256,18 +1256,8 @@ def tasks_parse(text, dry_run, yes):
 # --- Initiatives Commands ---
 
 
-@cli.group()
-def initiatives():
-    """Initiative management commands."""
-    pass
-
-
-@initiatives.command("list")
-@click.option("--all", "-a", "show_all", is_flag=True, help="Include completed initiatives")
-@click.option("--priority", "-p", type=click.Choice([p.value for p in InitiativePriority]),
-              help="Filter by priority")
-def initiatives_list(show_all, priority):
-    """List initiatives."""
+def _do_list_initiatives(show_all, priority):
+    """Helper function for listing initiatives."""
     with get_db_session() as db:
         service = InitiativeService(db)
 
@@ -1324,6 +1314,27 @@ def initiatives_list(show_all, priority):
             )
 
         console.print(table)
+
+
+@cli.group()
+def initiatives():
+    """Initiative management commands."""
+    pass
+
+
+@cli.group(name="itvs")
+def itvs():
+    """Initiative management commands (alias: itvs)."""
+    pass
+
+
+@initiatives.command("list")
+@click.option("--all", "-a", "show_all", is_flag=True, help="Include completed initiatives")
+@click.option("--priority", "-p", type=click.Choice([p.value for p in InitiativePriority]),
+              help="Filter by priority")
+def initiatives_list(show_all, priority):
+    """List initiatives."""
+    _do_list_initiatives(show_all, priority)
 
 
 @initiatives.command("add")
@@ -1441,6 +1452,49 @@ def initiatives_delete(initiative_id, yes):
 
         service.delete_initiative(initiative)
         console.print(f"[green]✓[/green] Deleted initiative #{initiative_id}")
+
+
+# --- Alias commands (itvs) --- 
+@itvs.command("list")
+@click.option("--all", "-a", "show_all", is_flag=True, help="Include completed initiatives")
+@click.option("--priority", "-p", type=click.Choice([p.value for p in InitiativePriority]),
+              help="Filter by priority")
+def itvs_list(show_all, priority):
+    """List initiatives."""
+    _do_list_initiatives(show_all, priority)
+
+
+@itvs.command("add")
+@click.argument("title")
+@click.option("--description", "-d", help="Initiative description")
+@click.option("--priority", "-p", type=click.Choice([p.value for p in InitiativePriority]),
+              default="medium", help="Priority level")
+@click.option("--target", "-t", help="Target date (YYYY-MM-DD)")
+def itvs_add(title, description, priority, target):
+    """Add a new initiative."""
+    initiatives_add(title, description, priority, target)
+
+
+@itvs.command("show")
+@click.argument("initiative_id", type=int)
+def itvs_show(initiative_id):
+    """Show initiative details."""
+    initiatives_show(initiative_id)
+
+
+@itvs.command("complete")
+@click.argument("initiative_id", type=int)
+def itvs_complete(initiative_id):
+    """Mark an initiative as completed."""
+    initiatives_complete(initiative_id)
+
+
+@itvs.command("delete")
+@click.argument("initiative_id", type=int)
+@click.option("--yes", "-y", is_flag=True, help="Skip confirmation")
+def itvs_delete(initiative_id, yes):
+    """Delete an initiative."""
+    initiatives_delete(initiative_id, yes)
 
 
 # --- Summary Command ---
