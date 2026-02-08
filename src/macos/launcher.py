@@ -204,8 +204,8 @@ if __name__ == "__main__":
     parser.add_argument(
         "--refresh-interval",
         type=int,
-        default=300,
-        help="How often to refresh task data in seconds (default: 300)",
+        default=30,
+        help="How often to refresh task data in seconds (default: 30)",
     )
 
     args = parser.parse_args()

@@ -69,7 +69,7 @@ class TaskMenuApp(NSObject):
 
         # Initialize with defaults - will be set by configure method
         self.api_url = "http://localhost:8000"
-        self.refresh_interval = 300
+        self.refresh_interval = 30
         self.status_bar = NSStatusBar.systemStatusBar()
         self.status_item = None
         self.menu = None
@@ -118,11 +118,11 @@ class TaskMenuApp(NSObject):
         # Build the initial menu (even before first data fetch)
         self._rebuild_menu()
 
-        # Add a refresh timer
+        # Add a refresh timer - use refresh_tasks_timer: selector instead of refresh_tasks:
         NSTimer.scheduledTimerWithTimeInterval_target_selector_userInfo_repeats_(
             self.refresh_interval,
             self,
-            "refresh_tasks:",
+            "refreshTasksTimer:",
             None,
             True,
         )
@@ -137,8 +137,8 @@ class TaskMenuApp(NSObject):
 
         self.status_item.setTitle_(title)
 
-    def refresh_tasks(self, sender: Any = None) -> None:
-        """Refresh task data from API (called by timer).
+    def refreshTasksTimer_(self, sender: Any = None) -> None:
+        """Refresh task data from API (called by NSTimer).
 
         Args:
             sender: Timer object (unused)
@@ -147,6 +147,15 @@ class TaskMenuApp(NSObject):
         thread = threading.Thread(target=self._fetch_and_update_tasks)
         thread.daemon = True
         thread.start()
+    
+    @objc.python_method
+    def refresh_tasks(self, sender: Any = None) -> None:
+        """Refresh task data from API (called by menu item or programmatically).
+
+        Args:
+            sender: Menu item or None (unused)
+        """
+        self.refreshTasksTimer_(sender)
 
     @objc.python_method
     def _fetch_and_update_tasks(self) -> None:
@@ -217,7 +226,7 @@ class TaskMenuApp(NSObject):
             # Separator
             self.menu.addItem_(NSMenuItem.separatorItem())
 
-        # Task items
+        # Task items (only show if total_count > 0)
             for task in self.tasks:
                 task_id = task.get("id", "?")
                 title = task.get("title", "Untitled")
