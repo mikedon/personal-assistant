@@ -62,5 +62,5 @@ Data Layer (SQLAlchemy)  → src/models/*.py (SQLite)
 - We should build everything API first. Document the API for external consumption
 - Keep an architecture change log that summarizes all of the major architectural decisions that you make along the way
 - Keep a README of how to deploy the application, the key features of the application.
-- This should be a project tracked in Git. Commit early and often and document the changes made clearly. Implement phases of implementation plans in new branches.
+- This should be a project tracked in Git. Commit early and often and document the changes made clearly. Implement phases of implementation plans in new branches, always.
 - **Comprehensive test coverage is required.** All API endpoints must have integration tests. Business logic and service functions must have unit tests. Tests should be runnable without external dependencies (use in-memory databases for testing).

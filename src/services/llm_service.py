@@ -187,6 +187,7 @@ class LLMService:
         text: str,
         source: str = "unknown",
         context: str | None = None,
+        initiatives: list[dict[str, Any]] | None = None,
     ) -> list[ExtractedTask]:
         """Extract actionable tasks from text using LLM.
 
@@ -194,6 +195,7 @@ class LLMService:
             text: The text to extract tasks from
             source: Source of the text (email, slack, meeting_notes, etc.)
             context: Additional context about the text
+            initiatives: Optional list of initiative dicts with id, title, description
 
         Returns:
             List of extracted tasks
@@ -201,6 +203,14 @@ class LLMService:
         today = datetime.now()
         today_str = today.strftime("%Y-%m-%d")
         weekday = today.strftime("%A")
+
+        # Build initiatives context if provided
+        initiatives_context = ""
+        if initiatives:
+            initiatives_context = "\nAvailable initiatives to link tasks to:\n"
+            for init in initiatives:
+                initiatives_context += f"- ID {init.get('id')}: {init.get('title')} (priority: {init.get('priority', 'medium')})\n"
+            initiatives_context += "\nWhen a task is related to one of these initiatives, include suggested_initiative_id in your response.\n"
 
         system_prompt = f"""You are a task extraction assistant. Analyze the given text and extract any actionable tasks or requests.
 
@@ -213,6 +223,7 @@ For each task, determine:
 - due_date: If a deadline is mentioned, extract it in ISO format (YYYY-MM-DDTHH:MM:SS). For relative dates like "this Sunday", "tomorrow", "next week", calculate the actual future date based on today's date.
 - tags: Relevant tags for categorization
 - confidence: Your confidence in this being a real task (0.0 to 1.0)
+- suggested_initiative_id: (optional) If this task relates to one of the available initiatives, include its ID. Otherwise omit this field.
 
 Return a JSON array of tasks. If no actionable tasks are found, return an empty array [].
 
@@ -222,7 +233,7 @@ Priority guidelines:
 - medium: Normal requests without urgency indicators
 - low: "when you get a chance", "no rush", or informational items
 
-IMPORTANT: All due dates must be in the future. If someone says "this Sunday" and today is {weekday}, calculate the next upcoming Sunday.
+IMPORTANT: All due dates must be in the future. If someone says "this Sunday" and today is {weekday}, calculate the next upcoming Sunday.{initiatives_context}
 
 Example output:
 [{{"title": "Review PR #123", "description": "Code review requested by John", "priority": "high", "due_date": "2026-01-29T17:00:00", "tags": ["code-review", "engineering"], "confidence": 0.9}}]"""
@@ -260,6 +271,13 @@ Extract all actionable tasks as JSON:"""
                         except (ValueError, TypeError):
                             pass
 
+                    suggested_initiative_id = None
+                    if task_data.get("suggested_initiative_id"):
+                        try:
+                            suggested_initiative_id = int(task_data["suggested_initiative_id"])
+                        except (ValueError, TypeError):
+                            pass
+
                     tasks.append(
                         ExtractedTask(
                             title=task_data.get("title", "Untitled Task")[:500],
@@ -268,6 +286,7 @@ Extract all actionable tasks as JSON:"""
                             due_date=due_date,
                             tags=task_data.get("tags", []),
                             confidence=float(task_data.get("confidence", 0.5)),
+                            suggested_initiative_id=suggested_initiative_id,
                         )
                     )
                 except (KeyError, TypeError) as e:

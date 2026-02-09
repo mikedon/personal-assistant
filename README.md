@@ -101,16 +101,34 @@ Autonomy levels: `suggest`, `auto_low`, `auto`, `full`
 #### Task Commands
 ```bash
 pa tasks list [--status STATUS] [--priority PRIORITY] [--all] [--limit N]
-pa tasks add TITLE [-d DESCRIPTION] [-p PRIORITY] [-D DUE] [-t TAG]...
+pa tasks add TITLE [-d DESCRIPTION] [-p PRIORITY] [-D DUE] [-t TAG]... [-i INITIATIVE_ID]
+pa tasks parse TEXT [--dry-run] [--yes]  # Create task from natural language
 pa tasks voice [-d DURATION] [--transcribe-only]  # Create task from voice
 pa tasks complete TASK_ID
 pa tasks delete TASK_ID [--yes]
 pa tasks show TASK_ID
 pa tasks priority [--limit N]   # Show top priority tasks
 pa tasks stats                  # Show task statistics
+pa tasks associate TASK_ID INITIATIVE_ID  # Link task to an initiative
 ```
 
 **Due date formats**: `YYYY-MM-DD`, `today`, `tomorrow`, `+3d` (3 days), `+2w` (2 weeks)
+
+**Natural language parsing**: The `tasks parse` command uses AI to extract task details from text. When active initiatives exist, the AI will suggest which initiative (if any) the task should be linked to. You can accept or skip the suggestion interactively.
+
+#### Initiatives Commands
+```bash
+pa initiatives list [--all] [--priority PRIORITY]      # List initiatives
+pa initiatives add TITLE [-d DESCRIPTION] [-p PRIORITY] [-t TARGET_DATE]  # Create initiative
+pa initiatives show INITIATIVE_ID                       # Show initiative details
+pa initiatives complete INITIATIVE_ID                   # Mark initiative as completed
+pa initiatives delete INITIATIVE_ID [--yes]             # Delete initiative
+pa initiatives add-tasks INITIATIVE_ID TASK_ID...      # Link multiple tasks to initiative
+
+# Alias: use 'itvs' instead of 'initiatives'
+pa itvs list
+pa itvs add-tasks 1 5 6 7  # Link tasks #5, #6, #7 to initiative #1
+```
 
 #### Voice Input
 ```bash

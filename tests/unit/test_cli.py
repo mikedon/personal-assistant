@@ -782,6 +782,70 @@ class TestTasksParseCommand:
             assert "95%" in result.output
             assert "#bug" in result.output or "#urgent" in result.output
 
+    @patch("src.cli.init_db")
+    @patch("src.cli.load_config")
+    @patch("src.cli.get_config")
+    @patch("src.cli.get_db_session")
+    def test_tasks_parse_suggests_initiative(self, mock_session, mock_get_config, mock_load_config, mock_init_db, runner, mock_config, mock_task):
+        """Test tasks parse suggests and links tasks to initiatives."""
+        mock_load_config.return_value = mock_config
+        mock_get_config.return_value = mock_config
+
+        mock_db = MagicMock()
+        mock_session.return_value.__enter__ = MagicMock(return_value=mock_db)
+        mock_session.return_value.__exit__ = MagicMock(return_value=False)
+
+        from src.services.llm_service import ExtractedTask
+        from datetime import datetime, timedelta
+
+        # Create extracted task with suggested initiative
+        extracted = ExtractedTask(
+            title="Write API documentation",
+            description="Document all API endpoints",
+            priority="medium",
+            due_date=datetime.now() + timedelta(days=3),
+            tags=["api", "docs"],
+            confidence=0.88,
+            suggested_initiative_id=5,  # Suggest initiative #5
+        )
+
+        with patch("src.cli.TaskService") as mock_service_class, \
+             patch("src.cli.InitiativeService") as mock_initiative_class, \
+             patch("src.services.llm_service.LLMService") as mock_llm_class:
+            mock_service = MagicMock()
+            mock_service.create_task.return_value = mock_task
+            mock_service_class.return_value = mock_service
+
+            # Mock initiative service to return active initiatives
+            mock_initiative = MagicMock()
+            mock_init_obj = MagicMock()
+            mock_init_obj.id = 5
+            mock_init_obj.title = "API Documentation"
+            mock_init_obj.priority.value = "medium"
+            mock_init_obj.description = "Write comprehensive API docs"
+            mock_initiative.get_active_initiatives.return_value = [mock_init_obj]
+            mock_initiative_class.return_value = mock_initiative
+
+            # Mock LLM to return extracted task with initiative
+            mock_llm = MagicMock()
+            mock_llm.extract_tasks_from_text = AsyncMock(return_value=[extracted])
+            mock_llm_class.return_value = mock_llm
+
+            # Use --yes to skip confirmation
+            result = runner.invoke(cli, [
+                "tasks", "parse",
+                "write API documentation for all endpoints",
+                "--yes"
+            ])
+
+            assert result.exit_code == 0
+            assert "Created task" in result.output
+            assert "Initiative" in result.output or "API Documentation" in result.output
+            # Verify task was created with the initiative ID
+            mock_service.create_task.assert_called_once()
+            call_kwargs = mock_service.create_task.call_args[1]
+            assert call_kwargs["initiative_id"] == 5
+
 
 class TestTasksDueCommand:
     """Tests for the tasks due command."""
