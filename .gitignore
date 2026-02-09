@@ -59,3 +59,6 @@ config.yaml
 # OAuth credentials
 credentials.json
 token.json
+
+# Test run directory
+testrun/
