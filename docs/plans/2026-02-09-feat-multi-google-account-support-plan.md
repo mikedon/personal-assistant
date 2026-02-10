@@ -878,11 +878,11 @@ class TaskResponse(BaseModel):
 ```
 
 **Success Criteria:**
-- [ ] API supports filtering tasks by account_id
-- [ ] CLI command `pa accounts list` shows all accounts
-- [ ] CLI command `pa accounts authenticate <account_id>` runs OAuth
-- [ ] CLI command `pa tasks list --account personal` filters by account
-- [ ] TaskResponse schema includes account_id
+- [x] API supports filtering tasks by account_id
+- [x] CLI command `pa accounts list` shows all accounts
+- [x] CLI command `pa accounts authenticate <account_id>` runs OAuth
+- [x] CLI command `pa tasks list --account personal` filters by account
+- [x] TaskResponse schema includes account_id
 
 **Testing:**
 - Integration test: API filter tasks by account_id
