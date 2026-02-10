@@ -313,10 +313,6 @@ class GmailIntegration(BaseIntegration):
                 "thread_id": message.get("threadId"),
             }
 
-            # Add account_id if using multi-account configuration
-            if self.account_id:
-                metadata["account_id"] = self.account_id
-
             return ActionableItem(
                 type=ActionableItemType.EMAIL_REPLY_NEEDED,
                 title=f"Reply to: {subject}",
@@ -327,6 +323,7 @@ class GmailIntegration(BaseIntegration):
                 priority=priority,
                 tags=["email", "reply-needed"],
                 metadata=metadata,
+                account_id=self.account_id,
             )
 
         return None

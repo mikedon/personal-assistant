@@ -4,7 +4,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Sequence
 
 from sqlalchemy import and_, func, or_
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 
 from src.models.initiative import InitiativePriority, InitiativeStatus
 from src.models.task import Task, TaskPriority, TaskSource, TaskStatus
@@ -41,6 +41,9 @@ class TaskService:
             Tuple of (tasks, total_count)
         """
         query = self.db.query(Task)
+
+        # Add eager loading for initiative to avoid N+1 queries
+        query = query.options(joinedload(Task.initiative))
 
         # Status filter
         if status is not None:
@@ -104,6 +107,7 @@ class TaskService:
         """Get top priority tasks that are actionable (pending or in progress)."""
         return (
             self.db.query(Task)
+            .options(joinedload(Task.initiative))
             .filter(Task.status.in_([TaskStatus.PENDING, TaskStatus.IN_PROGRESS]))
             .order_by(Task.priority_score.desc())
             .limit(limit)
@@ -115,6 +119,7 @@ class TaskService:
         now = datetime.now(UTC).replace(tzinfo=None)
         return (
             self.db.query(Task)
+            .options(joinedload(Task.initiative))
             .filter(
                 and_(
                     Task.due_date < now,
@@ -131,6 +136,7 @@ class TaskService:
         soon = now + timedelta(days=days)
         return (
             self.db.query(Task)
+            .options(joinedload(Task.initiative))
             .filter(
                 and_(
                     Task.due_date >= now,
@@ -154,7 +160,29 @@ class TaskService:
         tags: list[str] | None = None,
         initiative_id: int | None = None,
     ) -> Task:
-        """Create a new task with calculated priority score."""
+        """Create a new task with calculated priority score.
+
+        Args:
+            title: Task title
+            description: Task description
+            priority: Task priority level
+            source: Source of the task (email, manual, etc.)
+            source_reference: Reference ID in source system
+            account_id: Account identifier (must exist in configuration if provided)
+            due_date: Task due date
+            tags: List of tags
+            initiative_id: Associated initiative ID
+
+        Returns:
+            Created task
+
+        Raises:
+            ValueError: If account_id is provided but not configured
+        """
+        # Validate account_id if provided
+        if account_id:
+            self._validate_account_id(account_id)
+
         task = Task(
             title=title,
             description=description,
@@ -175,6 +203,34 @@ class TaskService:
         self.db.refresh(task)
 
         return task
+
+    def _validate_account_id(self, account_id: str) -> None:
+        """Validate that account_id exists in configuration.
+
+        Args:
+            account_id: Account identifier to validate
+
+        Raises:
+            ValueError: If account_id is not configured
+        """
+        from src.integrations.manager import IntegrationManager
+        from src.models.integration import IntegrationType
+        from src.utils.config import load_config
+
+        # Load config to initialize IntegrationManager
+        config = load_config()
+        manager = IntegrationManager(config)
+
+        # Collect all configured account_ids
+        all_accounts = []
+        for integration_type in IntegrationType:
+            all_accounts.extend(manager.list_accounts(integration_type))
+
+        if account_id not in all_accounts:
+            raise ValueError(
+                f"Invalid account_id: {account_id}. "
+                f"Configured accounts: {', '.join(all_accounts) if all_accounts else 'none'}"
+            )
 
     def update_task(
         self,
@@ -237,7 +293,12 @@ class TaskService:
         self, task_ids: list[int], status: TaskStatus
     ) -> list[Task]:
         """Update status for multiple tasks."""
-        tasks = self.db.query(Task).filter(Task.id.in_(task_ids)).all()
+        tasks = (
+            self.db.query(Task)
+            .options(joinedload(Task.initiative))
+            .filter(Task.id.in_(task_ids))
+            .all()
+        )
 
         now = datetime.now(UTC) if status == TaskStatus.COMPLETED else None
 

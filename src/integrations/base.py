@@ -42,6 +42,7 @@ class ActionableItem:
     priority: str = "medium"  # Will be mapped to TaskPriority
     tags: list[str] | None = None
     metadata: dict[str, Any] | None = None  # Additional context
+    account_id: str | None = None  # Account identifier for multi-account integrations
 
 
 class BaseIntegration(ABC):

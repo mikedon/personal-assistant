@@ -103,6 +103,51 @@ The application follows a clean layered architecture:
 - Query logic can be reused across endpoints
 - Supports future caching layer
 
+## Security Architecture
+
+### Single-User Local Operation Model
+**Decision**: Design the application for single-user local operation without multi-user authentication
+**Date**: 2026-02-09
+**Status**: Implemented
+
+**Context**:
+The Personal Assistant is designed to run locally on a user's personal machine, similar to desktop applications like text editors or note-taking apps. During PR #1 code review, questions arose about authentication and authorization for multi-account Google integration.
+
+**Decision**:
+- No user authentication or authorization implemented
+- API endpoints do not validate account_id ownership
+- CLI commands operate without authentication
+- OAuth tokens stored locally with file-system permissions (0600) for access control
+- Multi-account support allows one user to configure multiple Google accounts (personal, work)
+
+**Rationale**:
+1. **Use Case Alignment**: The tool is designed for personal productivity on a single user's machine
+2. **Simplicity**: Avoids complexity of user management, sessions, password storage
+3. **OS-Level Security**: Relies on OS file permissions and user accounts for access control
+4. **Deployment Model**: Not intended for shared servers or multi-user environments
+5. **Development Speed**: Allows faster iteration on core productivity features
+
+**Security Implications**:
+- ✅ **Acceptable for single-user desktops**: Standard model for desktop productivity tools
+- ⚠️ **Not suitable for shared servers**: Anyone with system access can use the tool
+- ⚠️ **No audit trail**: Cannot track which OS user performed actions
+- ✅ **OAuth tokens protected**: File permissions (0600) prevent other OS users from reading tokens
+
+**Future Considerations**:
+If the tool evolves to support multi-user or hosted deployments, authentication and authorization must be added:
+- User authentication (password, SSO, etc.)
+- Account ownership mapping (user_id → account_id associations)
+- API authentication (API keys, JWT tokens)
+- Audit logging with user context
+
+**Documentation**:
+- README.md includes "Security Model" section explaining single-user design
+- API documentation notes lack of authentication
+- Security assumptions clearly documented
+
+**Related Issues**:
+- Code review P1 issues #2 and #3 noted authorization gaps - resolved by documenting single-user model
+
 ## Data Model Decisions
 
 ### Task Priority Scoring

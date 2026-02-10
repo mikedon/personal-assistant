@@ -70,11 +70,17 @@ class GoogleOAuthManager:
         return self._creds
 
     def _save_credentials(self) -> None:
-        """Save credentials to token file."""
+        """Save credentials to token file with restricted permissions."""
         if self._creds:
-            self.token_path.parent.mkdir(parents=True, exist_ok=True)
+            # Create parent directory with restricted permissions
+            self.token_path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+
+            # Write token file
             with open(self.token_path, "w") as token:
                 token.write(self._creds.to_json())
+
+            # Set restrictive permissions (owner read/write only)
+            os.chmod(self.token_path, 0o600)
 
     def is_authenticated(self) -> bool:
         """Check if we have valid credentials.

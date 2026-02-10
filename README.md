@@ -12,6 +12,24 @@ A personal assistant agent that helps track tasks, monitors multiple data source
 - **Local Operation**: Runs entirely on your machine with SQLite storage
 - **Configurable**: YAML-based configuration for easy customization
 
+## Security Model
+
+**Important:** This tool is designed for **single-user local operation** only. It runs on your personal machine and stores all data locally in SQLite.
+
+**Security Assumptions:**
+- **Single User:** The tool assumes it is used by one person on their own machine
+- **Local Access:** API and CLI access is not authenticated - anyone with access to your machine can use the tool
+- **Multi-Account Support:** Multiple Google accounts can be configured (e.g., personal and work), but all are accessible to anyone using the tool locally
+- **OAuth Tokens:** OAuth refresh tokens are stored locally with restricted file permissions (0600) to prevent access by other users on the same machine
+
+**Not Suitable For:**
+- Multi-user environments without proper OS-level access controls
+- Shared servers or systems where untrusted users have access
+- Public-facing deployments without adding authentication layer
+
+**Future Enhancements:**
+Multi-user authentication and authorization may be added in a future release for shared/hosted deployments.
+
 ## Installation
 
 ### Prerequisites
