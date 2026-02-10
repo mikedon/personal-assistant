@@ -37,6 +37,7 @@ def list_tasks(
     account_id: str | None = Query(default=None, description="Filter by source account ID"),
     search: str | None = Query(default=None, description="Search in title and description"),
     tags: list[str] | None = Query(default=None, description="Filter by tags (matches any)"),
+    document_links: list[str] | None = Query(default=None, description="Filter by document links (matches any)"),
     due_before: datetime | None = Query(default=None, description="Filter tasks due before this date"),
     due_after: datetime | None = Query(default=None, description="Filter tasks due after this date"),
     include_completed: bool = Query(default=True, description="Include completed tasks"),
@@ -51,6 +52,7 @@ def list_tasks(
         account_id=account_id,
         search=search,
         tags=tags,
+        document_links=document_links,
         due_before=due_before,
         due_after=due_after,
         include_completed=include_completed,
@@ -128,6 +130,7 @@ def create_task(
         source_reference=task_data.source_reference,
         due_date=task_data.due_date,
         tags=task_data.tags,
+        document_links=task_data.document_links if task_data.document_links else None,
         initiative_id=task_data.initiative_id,
     )
     return _task_to_response(task)
@@ -152,6 +155,7 @@ def update_task(
         priority=task_data.priority,
         due_date=task_data.due_date,
         tags=task_data.tags,
+        document_links=task_data.document_links,
         initiative_id=task_data.initiative_id,
         clear_initiative=task_data.clear_initiative,
     )
@@ -213,12 +217,14 @@ def _task_to_response(task: Task) -> TaskResponse:
         priority=task.priority,
         source=task.source,
         source_reference=task.source_reference,
+        account_id=task.account_id,
         priority_score=task.priority_score,
         due_date=task.due_date,
         created_at=task.created_at,
         updated_at=task.updated_at,
         completed_at=task.completed_at,
         tags=task.get_tags_list(),
+        document_links=task.get_document_links_list(),
         initiative_id=task.initiative_id,
         initiative_title=task.initiative.title if task.initiative else None,
     )

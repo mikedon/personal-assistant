@@ -17,6 +17,7 @@ class TaskBase(BaseModel):
     priority: TaskPriority = TaskPriority.MEDIUM
     due_date: datetime | None = None
     tags: list[str] = Field(default_factory=list)
+    document_links: list[str] = Field(default_factory=list, description="External document URLs")
 
 
 class TaskCreate(TaskBase):
@@ -36,6 +37,7 @@ class TaskUpdate(BaseModel):
     priority: TaskPriority | None = None
     due_date: datetime | None = None
     tags: list[str] | None = None
+    document_links: list[str] | None = None
     initiative_id: int | None = None
     clear_initiative: bool = False
 
