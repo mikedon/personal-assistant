@@ -26,6 +26,7 @@ class TaskService:
         status: TaskStatus | list[TaskStatus] | None = None,
         priority: TaskPriority | list[TaskPriority] | None = None,
         source: TaskSource | None = None,
+        account_id: str | None = None,
         tags: list[str] | None = None,
         search: str | None = None,
         due_before: datetime | None = None,
@@ -60,6 +61,10 @@ class TaskService:
         # Source filter
         if source is not None:
             query = query.filter(Task.source == source)
+
+        # Account ID filter
+        if account_id is not None:
+            query = query.filter(Task.account_id == account_id)
 
         # Tags filter (matches any of the provided tags)
         if tags:
@@ -144,6 +149,7 @@ class TaskService:
         priority: TaskPriority = TaskPriority.MEDIUM,
         source: TaskSource = TaskSource.MANUAL,
         source_reference: str | None = None,
+        account_id: str | None = None,
         due_date: datetime | None = None,
         tags: list[str] | None = None,
         initiative_id: int | None = None,
@@ -155,6 +161,7 @@ class TaskService:
             priority=priority,
             source=source,
             source_reference=source_reference,
+            account_id=account_id,
             due_date=due_date,
             initiative_id=initiative_id,
         )
