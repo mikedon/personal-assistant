@@ -213,8 +213,8 @@ class TaskService:
         Raises:
             ValueError: If account_id is not configured
         """
+        from src.integrations.base import IntegrationType
         from src.integrations.manager import IntegrationManager
-        from src.models.integration import IntegrationType
         from src.utils.config import load_config
 
         # Load config to initialize IntegrationManager

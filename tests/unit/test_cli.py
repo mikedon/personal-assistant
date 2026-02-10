@@ -1274,3 +1274,168 @@ class TestTasksMergeCommand:
 
         assert result.exit_code == 0
         assert "API key not configured" in result.output
+
+
+class TestAccountsCommands:
+    """Tests for Google accounts management commands."""
+
+    @patch("src.cli.get_config")
+    def test_accounts_list(self, mock_get_config, runner):
+        """Test accounts list command shows configured accounts."""
+        mock_config = MagicMock()
+        mock_config.google.enabled = True
+        mock_config.google.accounts = [
+            MagicMock(
+                account_id="personal",
+                display_name="Personal Gmail",
+                enabled=True,
+                polling_interval_minutes=15,
+            ),
+            MagicMock(
+                account_id="work",
+                display_name="Work Gmail",
+                enabled=True,
+                polling_interval_minutes=5,
+            ),
+        ]
+        mock_get_config.return_value = mock_config
+
+        result = runner.invoke(cli, ["accounts", "list"])
+
+        assert result.exit_code == 0
+        assert "personal" in result.output
+        assert "work" in result.output
+        assert "Personal Gmail" in result.output
+        assert "Work Gmail" in result.output
+
+    @patch("src.cli.get_config")
+    def test_accounts_list_no_accounts(self, mock_get_config, runner):
+        """Test accounts list with no accounts configured."""
+        mock_config = MagicMock()
+        mock_config.google.enabled = False
+        mock_config.google.accounts = []
+        mock_get_config.return_value = mock_config
+
+        result = runner.invoke(cli, ["accounts", "list"])
+
+        assert result.exit_code == 0
+        assert "No Google accounts configured" in result.output
+
+    @patch("src.integrations.oauth_utils.GoogleOAuthManager")
+    @patch("src.cli.get_config")
+    def test_accounts_authenticate_success(self, mock_get_config, mock_oauth_class, runner):
+        """Test accounts authenticate command succeeds."""
+        mock_config = MagicMock()
+        mock_config.google.enabled = True
+        mock_config.google.accounts = [
+            MagicMock(
+                account_id="personal",
+                credentials_path="credentials.personal.json",
+                token_path="token.personal.json",
+                scopes=["https://www.googleapis.com/auth/gmail.readonly"],
+            )
+        ]
+        mock_get_config.return_value = mock_config
+
+        # Mock OAuth manager
+        mock_oauth = MagicMock()
+        mock_creds = MagicMock()
+        mock_creds.valid = True
+        mock_oauth.get_credentials.return_value = mock_creds
+        mock_oauth_class.return_value = mock_oauth
+
+        result = runner.invoke(cli, ["accounts", "authenticate", "personal"])
+
+        assert result.exit_code == 0
+        assert "Successfully authenticated" in result.output or "✓" in result.output
+        mock_oauth.get_credentials.assert_called_once()
+
+    @patch("src.cli.get_config")
+    def test_accounts_authenticate_not_found(self, mock_get_config, runner):
+        """Test accounts authenticate with nonexistent account."""
+        mock_config = MagicMock()
+        mock_config.google.enabled = True
+        mock_config.google.accounts = [
+            MagicMock(account_id="personal")
+        ]
+        mock_get_config.return_value = mock_config
+
+        result = runner.invoke(cli, ["accounts", "authenticate", "nonexistent"])
+
+        assert result.exit_code == 0
+        assert "not found" in result.output
+
+    @patch("src.integrations.oauth_utils.GoogleOAuthManager")
+    @patch("src.cli.get_config")
+    def test_accounts_authenticate_failure(self, mock_get_config, mock_oauth_class, runner):
+        """Test accounts authenticate command handles OAuth errors."""
+        mock_config = MagicMock()
+        mock_config.google.enabled = True
+        mock_config.google.accounts = [
+            MagicMock(
+                account_id="personal",
+                credentials_path="credentials.personal.json",
+                token_path="token.personal.json",
+                scopes=["https://www.googleapis.com/auth/gmail.readonly"],
+            )
+        ]
+        mock_get_config.return_value = mock_config
+
+        # Mock OAuth manager to raise exception
+        mock_oauth = MagicMock()
+        mock_oauth.get_credentials.side_effect = Exception("OAuth error")
+        mock_oauth_class.return_value = mock_oauth
+
+        result = runner.invoke(cli, ["accounts", "authenticate", "personal"])
+
+        assert result.exit_code == 0
+        assert "error" in result.output.lower() or "failed" in result.output.lower()
+
+    @patch("src.cli.init_db")
+    @patch("src.cli.load_config")
+    @patch("src.cli.get_db_session")
+    def test_tasks_list_with_account_filter(self, mock_session, mock_load_config, mock_init_db, runner, mock_config, mock_task):
+        """Test tasks list command with --account filter."""
+        mock_task.account_id = "personal"
+        mock_load_config.return_value = mock_config
+
+        mock_db = MagicMock()
+        mock_session.return_value.__enter__ = MagicMock(return_value=mock_db)
+        mock_session.return_value.__exit__ = MagicMock(return_value=False)
+
+        with patch("src.cli.TaskService") as mock_service_class:
+            mock_service = MagicMock()
+            mock_service.get_tasks.return_value = ([mock_task], 1)
+            mock_service_class.return_value = mock_service
+
+            result = runner.invoke(cli, ["tasks", "list", "--account", "personal"])
+
+            assert result.exit_code == 0
+            # Verify account_id was passed to get_tasks
+            mock_service.get_tasks.assert_called_once()
+            call_kwargs = mock_service.get_tasks.call_args[1]
+            assert call_kwargs.get("account_id") == "personal"
+
+    @patch("src.cli.init_db")
+    @patch("src.cli.load_config")
+    @patch("src.cli.get_db_session")
+    def test_tasks_list_account_filter_shorthand(self, mock_session, mock_load_config, mock_init_db, runner, mock_config, mock_task):
+        """Test tasks list command with -a shorthand for account filter."""
+        mock_task.account_id = "work"
+        mock_load_config.return_value = mock_config
+
+        mock_db = MagicMock()
+        mock_session.return_value.__enter__ = MagicMock(return_value=mock_db)
+        mock_session.return_value.__exit__ = MagicMock(return_value=False)
+
+        with patch("src.cli.TaskService") as mock_service_class:
+            mock_service = MagicMock()
+            mock_service.get_tasks.return_value = ([mock_task], 1)
+            mock_service_class.return_value = mock_service
+
+            result = runner.invoke(cli, ["tasks", "list", "-a", "work"])
+
+            assert result.exit_code == 0
+            mock_service.get_tasks.assert_called_once()
+            call_kwargs = mock_service.get_tasks.call_args[1]
+            assert call_kwargs.get("account_id") == "work"

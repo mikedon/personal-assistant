@@ -206,7 +206,7 @@ def migrate_legacy_google_config(config_dict: dict) -> dict:
                 "https://www.googleapis.com/auth/calendar",
                 "https://www.googleapis.com/auth/drive.readonly",
             ]),
-            "polling_interval_minutes": 5,
+            "polling_interval_minutes": google_config.get("polling_interval_minutes", 5),
             "gmail": google_config.get("gmail", {}),
         }
         config_dict["google"] = {
