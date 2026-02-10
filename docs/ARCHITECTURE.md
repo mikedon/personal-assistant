@@ -547,3 +547,57 @@ Microphone → sounddevice → WAV bytes → Whisper API → Text → LLM → Ta
 - Implemented FastAPI application with task CRUD endpoints
 - Added comprehensive test coverage (unit + integration)
 - Established development guidelines and tooling (pytest, ruff)
+
+
+## Multi-Account Google Integration Architecture
+
+### Decision: Support Multiple Google Accounts Simultaneously
+**Date**: 2026-02-09  
+**Status**: Implemented
+
+### Context
+Users often have multiple Google accounts (personal, work, side projects) and need to monitor all of them for important tasks and information. The original architecture only supported a single Google account connection.
+
+### Decision
+Refactor the integration architecture to support multiple accounts per integration type using composite keys.
+
+**Key Changes:**
+1. **Configuration**: Changed GoogleConfig from single object to array of GoogleAccountConfig objects
+2. **Integration Manager**: Changed from `dict[IntegrationType, BaseIntegration]` to `dict[tuple[IntegrationType, str], BaseIntegration]`
+3. **Task Model**: Added `account_id` field to track which account sourced each task
+4. **OAuth Tokens**: Each account uses separate token file (e.g., token.personal.json, token.work.json)
+5. **Per-Account Settings**: Each account has its own polling interval, Gmail filters, and enable/disable toggle
+
+### Consequences
+
+**Positive:**
+- Users can monitor multiple Gmail accounts without switching configs
+- Per-account polling intervals allow prioritizing important accounts
+- Per-account filters enable fine-grained control over what generates tasks
+- Account tagging enables work/life task separation
+- Backwards compatible via automatic config migration
+
+**Negative:**
+- More complex configuration structure
+- Multiple OAuth flows required (one per account)
+- Increased complexity in IntegrationManager
+- More token files to manage
+
+**Trade-offs:**
+- Chose composite keys over nested data structures for simplicity and performance
+- Prioritized explicit configuration over automatic account discovery
+- Used account_id string instead of integer ID to make configs more readable
+
+### Implementation Files
+- `src/utils/config.py`: GoogleAccountConfig and migration logic
+- `src/integrations/manager.py`: Composite key architecture
+- `src/models/task.py`: account_id field
+- `src/integrations/gmail_integration.py`: Account-aware initialization
+- `src/cli.py`: Account management commands
+
+### Future Considerations
+- Extend multi-account pattern to Slack (multiple workspaces)
+- Cross-account task deduplication
+- Account-specific priority weighting
+- Account activity dashboard
+

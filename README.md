@@ -58,6 +58,50 @@ cp config.example.yaml config.yaml
    - Add Slack tokens (for Slack integration)
    - Adjust agent behavior settings
 
+#### Multi-Account Google Setup
+
+The assistant supports multiple Google accounts (e.g., personal and work) simultaneously:
+
+1. **Configure multiple accounts** in `config.yaml`:
+```yaml
+google:
+  enabled: true
+  accounts:
+    - account_id: "personal"
+      display_name: "Personal Gmail"
+      credentials_path: "credentials.personal.json"
+      token_path: "token.personal.json"
+      polling_interval_minutes: 15
+      gmail:
+        inbox_type: "unread"
+        # ... other Gmail settings
+
+    - account_id: "work"
+      display_name: "Work Gmail"
+      credentials_path: "credentials.work.json"
+      token_path: "token.work.json"
+      polling_interval_minutes: 5
+      gmail:
+        inbox_type: "important"
+        include_senders: ["@company.com"]
+        # ... other Gmail settings
+```
+
+2. **Authenticate each account**:
+```bash
+pa accounts list                    # Show all configured accounts
+pa accounts authenticate personal   # Run OAuth for personal account
+pa accounts authenticate work       # Run OAuth for work account
+```
+
+3. **Filter tasks by account**:
+```bash
+pa tasks list --account personal   # Show only personal account tasks
+pa tasks list --account work       # Show only work account tasks
+```
+
+Tasks created from each account are automatically tagged with the account ID, allowing you to separate personal and work tasks.
+
 ## Usage
 
 ### Command-Line Interface (CLI)
