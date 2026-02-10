@@ -575,12 +575,12 @@ def actionable_item_to_task_params(item: ActionableItem) -> dict:
 ```
 
 **Success Criteria:**
-- [ ] IntegrationManager stores multiple Gmail instances
-- [ ] Composite key `(IntegrationType, account_id)` used throughout
-- [ ] `poll_all()` polls all accounts
-- [ ] `poll_account()` polls specific account
-- [ ] `list_accounts()` returns all account IDs for integration type
-- [ ] Tasks created with correct account_id
+- [x] IntegrationManager stores multiple Gmail instances
+- [x] Composite key `(IntegrationType, account_id)` used throughout
+- [x] `poll_all()` polls all accounts
+- [x] `poll_account()` polls specific account
+- [x] `list_accounts()` returns all account IDs for integration type
+- [x] Tasks created with correct account_id
 
 **Testing:**
 - Unit test: Initialize manager with multi-account config
