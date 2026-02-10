@@ -83,6 +83,9 @@ class Task(Base):
     # Tags for categorization (stored as comma-separated string)
     tags: Mapped[str | None] = mapped_column(String(500), nullable=True)
 
+    # Document links (stored as comma-separated URLs)
+    document_links: Mapped[str | None] = mapped_column(String(1000), nullable=True)
+
     # Initiative relationship (optional - task can belong to an initiative)
     initiative_id: Mapped[int | None] = mapped_column(
         Integer, ForeignKey("initiatives.id", ondelete="SET NULL"), nullable=True
@@ -103,3 +106,13 @@ class Task(Base):
     def set_tags_list(self, tags: list[str]) -> None:
         """Set tags from a list."""
         self.tags = ",".join(tags) if tags else None
+
+    def get_document_links_list(self) -> list[str]:
+        """Get document links as a list."""
+        if not self.document_links:
+            return []
+        return [link.strip() for link in self.document_links.split(",") if link.strip()]
+
+    def set_document_links_list(self, links: list[str]) -> None:
+        """Set document links from a list."""
+        self.document_links = ",".join(links) if links else None
