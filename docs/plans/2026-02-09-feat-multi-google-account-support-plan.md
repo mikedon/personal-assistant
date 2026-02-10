@@ -259,11 +259,11 @@ def migrate_legacy_google_config(config_dict: dict) -> dict:
 ```
 
 **Success Criteria:**
-- [ ] Pydantic models validate new array-based structure
-- [ ] Existing single-account configs automatically migrate
-- [ ] Account IDs are validated as unique
-- [ ] Per-account polling intervals supported
-- [ ] config.example.yaml updated with multi-account example
+- [x] Pydantic models validate new array-based structure
+- [x] Existing single-account configs automatically migrate
+- [x] Account IDs are validated as unique
+- [x] Per-account polling intervals supported
+- [x] config.example.yaml updated with multi-account example
 
 **Testing:**
 - Unit test: Validate GoogleAccountConfig with valid/invalid account_ids

@@ -4,7 +4,7 @@ from pathlib import Path
 from typing import Any
 
 import yaml
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -60,10 +60,12 @@ class GmailQueryConfig(BaseModel):
     )
 
 
-class GoogleConfig(BaseModel):
-    """Google API configuration for Gmail, Calendar, and Drive."""
+class GoogleAccountConfig(BaseModel):
+    """Configuration for a single Google account."""
 
-    enabled: bool = Field(default=False, description="Enable Google integrations")
+    account_id: str = Field(description="Unique identifier (e.g., 'personal', 'work')")
+    display_name: str = Field(description="Human-readable name")
+    enabled: bool = Field(default=True, description="Enable this account")
     credentials_path: str = Field(default="credentials.json", description="Path to OAuth credentials file")
     token_path: str = Field(default="token.json", description="Path to store OAuth token")
     scopes: list[str] = Field(
@@ -73,7 +75,34 @@ class GoogleConfig(BaseModel):
             "https://www.googleapis.com/auth/drive.readonly",
         ]
     )
+    polling_interval_minutes: int = Field(default=5, ge=1, description="Per-account polling interval")
     gmail: GmailQueryConfig = Field(default_factory=GmailQueryConfig, description="Gmail query settings")
+
+    @field_validator("account_id")
+    @classmethod
+    def validate_account_id(cls, v: str) -> str:
+        """Ensure account_id is lowercase, alphanumeric + underscores."""
+        if not v.islower() or not v.replace("_", "").isalnum():
+            raise ValueError(
+                "account_id must be lowercase alphanumeric with underscores only"
+            )
+        return v
+
+
+class GoogleConfig(BaseModel):
+    """Google API configuration for Gmail, Calendar, and Drive."""
+
+    enabled: bool = Field(default=False, description="Enable Google integrations")
+    accounts: list[GoogleAccountConfig] = Field(default=[], description="List of Google accounts")
+
+    @field_validator("accounts")
+    @classmethod
+    def validate_unique_account_ids(cls, v: list[GoogleAccountConfig]) -> list[GoogleAccountConfig]:
+        """Ensure account_id values are unique."""
+        account_ids = [acc.account_id for acc in v]
+        if len(account_ids) != len(set(account_ids)):
+            raise ValueError("account_id values must be unique")
+        return v
 
 
 class SlackConfig(BaseModel):
@@ -135,6 +164,59 @@ class Config(BaseSettings):
     voice: VoiceConfig = Field(default_factory=VoiceConfig)
 
 
+def migrate_legacy_google_config(config_dict: dict) -> dict:
+    """Migrate old single-account config to new multi-account format.
+
+    Old format:
+        google:
+          enabled: true
+          credentials_path: "credentials.json"
+          token_path: "token.json"
+          scopes: [...]
+          gmail: {...}
+
+    New format:
+        google:
+          enabled: true
+          accounts:
+            - account_id: "default"
+              credentials_path: "credentials.json"
+              ...
+    """
+    if "google" not in config_dict:
+        return config_dict
+
+    google_config = config_dict["google"]
+
+    # Check if already using new format
+    if "accounts" in google_config:
+        return config_dict
+
+    # Migrate to new format
+    if "credentials_path" in google_config:
+        # Wrap existing config in accounts array
+        legacy_account = {
+            "account_id": "default",
+            "display_name": "Default Account",
+            "enabled": google_config.get("enabled", True),
+            "credentials_path": google_config["credentials_path"],
+            "token_path": google_config.get("token_path", "token.json"),
+            "scopes": google_config.get("scopes", [
+                "https://www.googleapis.com/auth/gmail.readonly",
+                "https://www.googleapis.com/auth/calendar",
+                "https://www.googleapis.com/auth/drive.readonly",
+            ]),
+            "polling_interval_minutes": 5,
+            "gmail": google_config.get("gmail", {}),
+        }
+        config_dict["google"] = {
+            "enabled": google_config.get("enabled", True),
+            "accounts": [legacy_account],
+        }
+
+    return config_dict
+
+
 def load_config(config_path: str | Path | None = None) -> Config:
     """Load configuration from YAML file.
 
@@ -156,6 +238,9 @@ def load_config(config_path: str | Path | None = None) -> Config:
             loaded = yaml.safe_load(f)
             if loaded:
                 config_data = loaded
+
+    # Migrate legacy config if needed
+    config_data = migrate_legacy_google_config(config_data)
 
     return Config(**config_data)
 
