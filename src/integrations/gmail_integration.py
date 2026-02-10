@@ -32,35 +32,65 @@ class GmailIntegration(BaseIntegration):
         "important": "is:important",
     }
 
-    def __init__(self, config: dict[str, Any]):
+    def __init__(self, account_config: Any = None, config: dict[str, Any] | None = None):
         """Initialize Gmail integration.
 
         Args:
-            config: Configuration dict with credentials_path, token_path, etc.
+            account_config: GoogleAccountConfig object (preferred) for multi-account support
+            config: Legacy dict configuration for backwards compatibility
         """
-        super().__init__(config)
+        # Handle both new (GoogleAccountConfig) and old (dict) formats
+        if account_config is not None and hasattr(account_config, "account_id"):
+            # New multi-account format with GoogleAccountConfig
+            super().__init__({}, account_id=account_config.account_id)
+            self.account_config = account_config
+            credentials_path = account_config.credentials_path
+            token_path = account_config.token_path
+            scopes = account_config.scopes
+            gmail_config = account_config.gmail
+        else:
+            # Legacy dict format for backwards compatibility
+            if account_config is not None and isinstance(account_config, dict):
+                config = account_config
+            if config is None:
+                config = {}
+            super().__init__(config)
+            self.account_config = None
+            credentials_path = config.get("credentials_path", "credentials.json")
+            token_path = config.get("token_path", "token.json")
+            scopes = config.get("scopes", self.SCOPES)
+            gmail_config = config.get("gmail", {})
+
         self.oauth_manager = GoogleOAuthManager(
-            credentials_path=config.get("credentials_path", "credentials.json"),
-            token_path=config.get("token_path", "token.json"),
-            scopes=self.SCOPES,
+            credentials_path=credentials_path,
+            token_path=token_path,
+            scopes=scopes,
         )
         self.service = None
 
-        # Get gmail-specific config (nested under 'gmail' key or at root for backwards compat)
-        gmail_config = config.get("gmail", {})
-        self.max_results = gmail_config.get("max_results", config.get("max_results", 10))
-        self.lookback_days = gmail_config.get("lookback_days", config.get("lookback_days", 1))
-        self.lookback_hours = gmail_config.get("lookback_hours")
-        self.inbox_type = gmail_config.get("inbox_type", "unread")
-
-        # Filtering options
-        self.include_senders = [s.lower() for s in gmail_config.get("include_senders", [])]
-        self.exclude_senders = [s.lower() for s in gmail_config.get("exclude_senders", [])]
-        self.include_subjects = [s.lower() for s in gmail_config.get("include_subjects", [])]
-        self.exclude_subjects = [s.lower() for s in gmail_config.get("exclude_subjects", [])]
-        self.priority_senders = [s.lower() for s in gmail_config.get(
-            "priority_senders", config.get("priority_senders", [])
-        )]
+        # Get gmail-specific config
+        if hasattr(gmail_config, "max_results"):
+            # Pydantic model
+            self.max_results = gmail_config.max_results
+            self.lookback_days = gmail_config.lookback_days
+            self.lookback_hours = gmail_config.lookback_hours
+            self.inbox_type = gmail_config.inbox_type
+            self.include_senders = [s.lower() for s in gmail_config.include_senders]
+            self.exclude_senders = [s.lower() for s in gmail_config.exclude_senders]
+            self.include_subjects = [s.lower() for s in gmail_config.include_subjects]
+            self.exclude_subjects = [s.lower() for s in gmail_config.exclude_subjects]
+            self.priority_senders = [s.lower() for s in gmail_config.priority_senders]
+        else:
+            # Dict format
+            self.max_results = gmail_config.get("max_results", 10)
+            self.lookback_days = gmail_config.get("lookback_days", 1)
+            self.lookback_hours = gmail_config.get("lookback_hours")
+            self.inbox_type = gmail_config.get("inbox_type", "unread")
+            self.include_senders = [s.lower() for s in gmail_config.get("include_senders", [])]
+            self.exclude_senders = [s.lower() for s in gmail_config.get("exclude_senders", [])]
+            self.include_subjects = [s.lower() for s in gmail_config.get("include_subjects", [])]
+            self.exclude_subjects = [s.lower() for s in gmail_config.get("exclude_subjects", [])]
+            self.priority_senders = [s.lower() for s in gmail_config.get("priority_senders", [])]
 
     @property
     def integration_type(self) -> IntegrationType:
@@ -276,6 +306,17 @@ class GmailIntegration(BaseIntegration):
             elif "tomorrow" in (body.lower() if body else "") or "tomorrow" in subject.lower():
                 due_date = datetime.utcnow() + timedelta(days=1)
 
+            metadata = {
+                "sender": sender,
+                "subject": subject,
+                "date": date_str,
+                "thread_id": message.get("threadId"),
+            }
+
+            # Add account_id if using multi-account configuration
+            if self.account_id:
+                metadata["account_id"] = self.account_id
+
             return ActionableItem(
                 type=ActionableItemType.EMAIL_REPLY_NEEDED,
                 title=f"Reply to: {subject}",
@@ -285,12 +326,7 @@ class GmailIntegration(BaseIntegration):
                 due_date=due_date,
                 priority=priority,
                 tags=["email", "reply-needed"],
-                metadata={
-                    "sender": sender,
-                    "subject": subject,
-                    "date": date_str,
-                    "thread_id": message.get("threadId"),
-                },
+                metadata=metadata,
             )
 
         return None

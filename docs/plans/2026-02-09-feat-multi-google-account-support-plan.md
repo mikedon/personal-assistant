@@ -370,11 +370,11 @@ class BaseIntegration(ABC):
 ```
 
 **Success Criteria:**
-- [ ] GmailIntegration accepts GoogleAccountConfig
-- [ ] Each instance uses account-specific token file
-- [ ] ActionableItems include account_id in metadata
-- [ ] Multiple GmailIntegration instances can coexist
-- [ ] OAuth flow runs independently per account
+- [x] GmailIntegration accepts GoogleAccountConfig
+- [x] Each instance uses account-specific token file
+- [x] ActionableItems include account_id in metadata
+- [x] Multiple GmailIntegration instances can coexist
+- [x] OAuth flow runs independently per account
 
 **Testing:**
 - Unit test: GmailIntegration with account_id parameter
