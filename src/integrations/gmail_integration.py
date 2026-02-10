@@ -81,16 +81,18 @@ class GmailIntegration(BaseIntegration):
             self.exclude_subjects = [s.lower() for s in gmail_config.exclude_subjects]
             self.priority_senders = [s.lower() for s in gmail_config.priority_senders]
         else:
-            # Dict format
-            self.max_results = gmail_config.get("max_results", 10)
-            self.lookback_days = gmail_config.get("lookback_days", 1)
-            self.lookback_hours = gmail_config.get("lookback_hours")
-            self.inbox_type = gmail_config.get("inbox_type", "unread")
-            self.include_senders = [s.lower() for s in gmail_config.get("include_senders", [])]
-            self.exclude_senders = [s.lower() for s in gmail_config.get("exclude_senders", [])]
-            self.include_subjects = [s.lower() for s in gmail_config.get("include_subjects", [])]
-            self.exclude_subjects = [s.lower() for s in gmail_config.get("exclude_subjects", [])]
-            self.priority_senders = [s.lower() for s in gmail_config.get("priority_senders", [])]
+            # Dict format - check both nested gmail config and root config for backwards compatibility
+            # Nested config takes precedence over root-level config
+            root_config = config if config else {}
+            self.max_results = gmail_config.get("max_results") or root_config.get("max_results", 10)
+            self.lookback_days = gmail_config.get("lookback_days") or root_config.get("lookback_days", 1)
+            self.lookback_hours = gmail_config.get("lookback_hours") or root_config.get("lookback_hours")
+            self.inbox_type = gmail_config.get("inbox_type") or root_config.get("inbox_type", "unread")
+            self.include_senders = [s.lower() for s in (gmail_config.get("include_senders") or root_config.get("include_senders", []))]
+            self.exclude_senders = [s.lower() for s in (gmail_config.get("exclude_senders") or root_config.get("exclude_senders", []))]
+            self.include_subjects = [s.lower() for s in (gmail_config.get("include_subjects") or root_config.get("include_subjects", []))]
+            self.exclude_subjects = [s.lower() for s in (gmail_config.get("exclude_subjects") or root_config.get("exclude_subjects", []))]
+            self.priority_senders = [s.lower() for s in (gmail_config.get("priority_senders") or root_config.get("priority_senders", []))]
 
     @property
     def integration_type(self) -> IntegrationType:

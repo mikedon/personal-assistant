@@ -610,6 +610,8 @@ class TestIntegrationManagerPollAll:
     @pytest.mark.asyncio
     async def test_poll_all_returns_items_for_all_enabled_integrations(self):
         """Test that poll_all() returns actionable items for all enabled integrations."""
+        from src.integrations.manager import IntegrationKey
+
         manager = IntegrationManager({})
 
         # Create mock integrations
@@ -637,22 +639,30 @@ class TestIntegrationManagerPollAll:
         mock_slack.poll = AsyncMock(return_value=slack_items)
 
         manager.integrations = {
-            IntegrationType.GMAIL: mock_gmail,
-            IntegrationType.SLACK: mock_slack,
+            IntegrationKey(IntegrationType.GMAIL, "default"): mock_gmail,
+            IntegrationKey(IntegrationType.SLACK, "default"): mock_slack,
         }
 
         results = await manager.poll_all()
 
-        assert IntegrationType.GMAIL in results
-        assert IntegrationType.SLACK in results
-        assert len(results[IntegrationType.GMAIL]) == 1
-        assert len(results[IntegrationType.SLACK]) == 1
-        assert results[IntegrationType.GMAIL][0].title == "Reply to email"
-        assert results[IntegrationType.SLACK][0].title == "Respond in Slack"
+        # poll_all() now returns a flat list of ActionableItem objects
+        assert isinstance(results, list)
+        assert len(results) == 2
+        sources = [item.source for item in results]
+        assert IntegrationType.GMAIL in sources
+        assert IntegrationType.SLACK in sources
+        gmail_items_result = [item for item in results if item.source == IntegrationType.GMAIL]
+        slack_items_result = [item for item in results if item.source == IntegrationType.SLACK]
+        assert len(gmail_items_result) == 1
+        assert len(slack_items_result) == 1
+        assert gmail_items_result[0].title == "Reply to email"
+        assert slack_items_result[0].title == "Respond in Slack"
 
     @pytest.mark.asyncio
     async def test_poll_all_skips_disabled_integrations(self):
         """Test that poll_all() skips disabled integrations."""
+        from src.integrations.manager import IntegrationKey
+
         manager = IntegrationManager({})
 
         mock_gmail = AsyncMock()
@@ -672,8 +682,8 @@ class TestIntegrationManagerPollAll:
         )
 
         manager.integrations = {
-            IntegrationType.GMAIL: mock_gmail,
-            IntegrationType.SLACK: mock_slack,
+            IntegrationKey(IntegrationType.GMAIL, "default"): mock_gmail,
+            IntegrationKey(IntegrationType.SLACK, "default"): mock_slack,
         }
 
         results = await manager.poll_all()
@@ -682,13 +692,18 @@ class TestIntegrationManagerPollAll:
         mock_gmail.poll.assert_not_called()
         # Slack should be polled
         mock_slack.poll.assert_called_once()
-        # Only Slack results
-        assert IntegrationType.GMAIL not in results
-        assert IntegrationType.SLACK in results
+        # poll_all() returns flat list, so check sources
+        assert isinstance(results, list)
+        assert len(results) == 1
+        sources = [item.source for item in results]
+        assert IntegrationType.GMAIL not in sources
+        assert IntegrationType.SLACK in sources
 
     @pytest.mark.asyncio
     async def test_poll_all_handles_integration_errors_gracefully(self):
-        """Test that poll_all() handles errors and returns empty list for failed integrations."""
+        """Test that poll_all() handles errors and continues with other integrations."""
+        from src.integrations.manager import IntegrationKey
+
         manager = IntegrationManager({})
 
         mock_gmail = AsyncMock()
@@ -708,25 +723,28 @@ class TestIntegrationManagerPollAll:
         )
 
         manager.integrations = {
-            IntegrationType.GMAIL: mock_gmail,
-            IntegrationType.SLACK: mock_slack,
+            IntegrationKey(IntegrationType.GMAIL, "default"): mock_gmail,
+            IntegrationKey(IntegrationType.SLACK, "default"): mock_slack,
         }
 
         results = await manager.poll_all()
 
-        # Gmail should have empty list due to error
-        assert results[IntegrationType.GMAIL] == []
-        # Slack should succeed
-        assert len(results[IntegrationType.SLACK]) == 1
+        # poll_all() returns flat list and continues despite Gmail error
+        assert isinstance(results, list)
+        # Only Slack item should be in results (Gmail error handled gracefully)
+        assert len(results) == 1
+        assert results[0].source == IntegrationType.SLACK
+        assert results[0].title == "Success"
 
     @pytest.mark.asyncio
-    async def test_poll_all_returns_empty_dict_when_no_integrations(self):
-        """Test that poll_all() returns empty dict when no integrations configured."""
+    async def test_poll_all_returns_empty_list_when_no_integrations(self):
+        """Test that poll_all() returns empty list when no integrations configured."""
         manager = IntegrationManager({})
 
         results = await manager.poll_all()
 
-        assert results == {}
+        assert results == []
+        assert isinstance(results, list)
 
 
 class TestGmailIntegrationQueryBuilding:

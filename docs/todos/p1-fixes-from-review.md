@@ -50,9 +50,9 @@ def _save_credentials(self) -> None:
 ```
 
 ### Verification
-- [ ] File created with 0600 permissions from start
-- [ ] Parent directory has 0700 permissions
-- [ ] Test on Linux/macOS to verify no race condition
+- [x] File created with 0600 permissions from start
+- [x] Parent directory has 0700 permissions
+- [x] Test on Linux/macOS to verify no race condition
 - [ ] Add test: `test_oauth_token_permissions()`
 
 ---
@@ -84,9 +84,9 @@ sqlite3 personal_assistant.db "CREATE INDEX ix_tasks_account_status ON tasks (ac
 ```
 
 ### Verification
-- [ ] Index `ix_tasks_account_status` exists in database
-- [ ] Index is on columns (account_id, status) in that order
-- [ ] Query plan uses index for account_id+status filters
+- [x] Index `ix_tasks_account_status` exists in database
+- [x] Index is on columns (account_id, status) in that order
+- [x] Query plan uses index for account_id+status filters
 - [ ] Consider adding integration test to verify indexes
 
 ---
@@ -128,7 +128,7 @@ def recalculate_all_priorities(self) -> int:
 ```
 
 ### Verification
-- [ ] Add `joinedload(Task.initiative)` on line 334
+- [x] Add `joinedload(Task.initiative)` on line 334
 - [ ] Test with tasks that have initiatives
 - [ ] Verify SQL query log shows JOIN instead of separate queries
 - [ ] Add test: `test_recalculate_priorities_uses_joinedload()`
@@ -188,7 +188,7 @@ avg_completion_hours = avg_completion_seconds / 3600 if avg_completion_seconds e
 ```
 
 ### Verification
-- [ ] Replace memory loading with SQL aggregation
+- [x] Replace memory loading with SQL aggregation
 - [ ] Test with 0, 1, and 100+ completed tasks
 - [ ] Verify memory usage is constant regardless of completed task count
 - [ ] Check SQL query returns same result as old method
@@ -263,11 +263,11 @@ def _validate_account_id(self, account_id: str) -> None:
 Move validation out of TaskService entirely, validate at presentation layer.
 
 ### Verification
-- [ ] Choose and implement option (recommend Option A)
-- [ ] Update all TaskService instantiations to optionally pass IntegrationManager
+- [x] Choose and implement option (recommend Option A)
+- [x] Update all TaskService instantiations to optionally pass IntegrationManager
 - [ ] Test validation is cached across multiple task creations
 - [ ] Benchmark: create 100 tasks, verify no performance degradation
-- [ ] Create custom exception: `AccountNotFoundError`
+- [x] Create custom exception: `AccountNotFoundError`
 
 ---
 
@@ -309,7 +309,7 @@ async def test_connections(self) -> dict[IntegrationKey, bool]:
 ```
 
 ### Verification
-- [ ] Update return type annotation to `dict[IntegrationKey, bool]`
+- [x] Update return type annotation to `dict[IntegrationKey, bool]`
 - [ ] Update any callers to expect IntegrationKey instead of tuple
 - [ ] Run mypy/type checker to verify no errors
 - [ ] Test with multiple accounts
@@ -372,8 +372,8 @@ def _save_credentials(self) -> None:
 ```
 
 ### Verification
-- [ ] Add try/except around file operations
-- [ ] Provide user-friendly error messages with resolution steps
+- [x] Add try/except around file operations
+- [x] Provide user-friendly error messages with resolution steps
 - [ ] Test with read-only filesystem (should raise IOError)
 - [ ] Test with full disk (should raise IOError)
 - [ ] Add test: `test_save_credentials_handles_permission_error()`
@@ -446,8 +446,8 @@ def create_task(self, ..., account_id: str | None = None, ...) -> Task:
 **Note**: This is already the case in current code! Validation is on line 184, task creation on line 186. But with the refactor from P1-5 (caching), this ensures validation doesn't create new sessions.
 
 ### Verification
-- [ ] Ensure validation happens before Task() instantiation
-- [ ] After P1-5 refactor, verify no nested sessions created
+- [x] Ensure validation happens before Task() instantiation
+- [x] After P1-5 refactor, verify no nested sessions created
 - [ ] Test: validation failure doesn't leave DB in inconsistent state
 - [ ] Add test: `test_create_task_validation_failure_rolls_back()`
 
@@ -455,14 +455,14 @@ def create_task(self, ..., account_id: str | None = None, ...) -> Task:
 
 ## Summary Checklist
 
-- [ ] **P1-1**: OAuth token race condition fixed with atomic creation
-- [ ] **P1-2**: Composite database index verified/applied
-- [ ] **P1-3**: N+1 query fixed in recalculate_all_priorities()
-- [ ] **P1-4**: get_statistics() refactored to use SQL aggregation
-- [ ] **P1-5**: Account validation refactored with caching
-- [ ] **P1-6**: test_connections() return type fixed
-- [ ] **P1-7**: Error handling added to OAuth token save
-- [ ] **P1-8**: Database rollback verified after P1-5 refactor
+- [x] **P1-1**: OAuth token race condition fixed with atomic creation
+- [x] **P1-2**: Composite database index verified/applied
+- [x] **P1-3**: N+1 query fixed in recalculate_all_priorities()
+- [x] **P1-4**: get_statistics() refactored to use SQL aggregation
+- [x] **P1-5**: Account validation refactored with caching
+- [x] **P1-6**: test_connections() return type fixed
+- [x] **P1-7**: Error handling added to OAuth token save
+- [x] **P1-8**: Database rollback verified after P1-5 refactor
 
 ## Testing Requirements
 

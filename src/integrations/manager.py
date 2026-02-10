@@ -192,11 +192,11 @@ class IntegrationManager:
         logger.info(f"Polling {integration_type.value}:{account_id}")
         return await integration.poll()
 
-    async def test_connections(self) -> dict[tuple[IntegrationType, str], bool]:
+    async def test_connections(self) -> dict[IntegrationKey, bool]:
         """Test connections to all configured integrations.
 
         Returns:
-            Dict mapping (integration_type, account_id) to connection status.
+            Dictionary mapping IntegrationKey to connection test result (True=success).
         """
         results = {}
 
