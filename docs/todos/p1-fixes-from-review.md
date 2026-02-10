@@ -467,7 +467,7 @@ def create_task(self, ..., account_id: str | None = None, ...) -> Task:
 ## Testing Requirements
 
 After all fixes:
-- [ ] All existing tests pass (35 tests)
+- [x] All existing tests pass (378 tests)
 - [ ] Add 3 new critical tests:
   - `test_oauth_token_permissions()`
   - `test_recalculate_priorities_uses_joinedload()`
