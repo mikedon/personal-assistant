@@ -48,6 +48,42 @@ def test_task_tags_empty(test_db_session):
     assert task.tags is None
 
 
+def test_task_document_links(test_db_session):
+    """Test task document links functionality."""
+    task = Task(title="Test Task")
+    links = ["https://docs.google.com/doc1", "https://example.com/doc2"]
+    task.set_document_links_list(links)
+
+    test_db_session.add(task)
+    test_db_session.commit()
+
+    assert task.document_links == "https://docs.google.com/doc1,https://example.com/doc2"
+    assert task.get_document_links_list() == links
+
+
+def test_task_document_links_empty(test_db_session):
+    """Test task with no document links."""
+    task = Task(title="Test Task")
+
+    assert task.get_document_links_list() == []
+
+    task.set_document_links_list([])
+    assert task.document_links is None
+
+
+def test_task_document_links_single(test_db_session):
+    """Test task with single document link."""
+    task = Task(title="Test Task")
+    link = "https://docs.google.com/document/d/123"
+    task.set_document_links_list([link])
+
+    test_db_session.add(task)
+    test_db_session.commit()
+
+    assert task.document_links == link
+    assert task.get_document_links_list() == [link]
+
+
 def test_task_repr():
     """Test task string representation."""
     task = Task(
