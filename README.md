@@ -178,6 +178,34 @@ pa tasks associate TASK_ID INITIATIVE_ID  # Link task to an initiative
 
 **Natural language parsing**: The `tasks parse` command uses AI to extract task details from text. When active initiatives exist, the AI will suggest which initiative (if any) the task should be linked to. You can accept or skip the suggestion interactively.
 
+#### Working with Document Links
+
+Tasks can be linked to external documents like Google Docs, Notion pages, or any URL:
+
+```bash
+# Create task with document link
+pa tasks add "Review design spec" -l "https://docs.google.com/document/d/..."
+
+# Add multiple links
+pa tasks add "Implementation task" \
+  -l "https://docs.google.com/doc1" \
+  -l "https://figma.com/design1"
+
+# Filter tasks by document link
+pa tasks list --link "docs.google.com"
+
+# Add link to existing task
+pa tasks link-add 42 "https://notion.so/page"
+
+# Remove link from task
+pa tasks link-remove 42 "https://notion.so/page"
+
+# View task with links
+pa tasks show 42
+```
+
+**Note**: In the macOS menu bar, tasks with document links show a 🔗 icon.
+
 #### Initiatives Commands
 ```bash
 pa initiatives list [--all] [--priority PRIORITY]      # List initiatives
@@ -263,8 +291,10 @@ The `GET /api/tasks` endpoint supports:
 - `status` - Filter by status (pending, in_progress, completed, etc.)
 - `priority` - Filter by priority (critical, high, medium, low)
 - `source` - Filter by source (manual, email, slack, etc.)
+- `account_id` - Filter by source account ID
 - `search` - Search in title and description
 - `tags` - Filter by tags (matches any)
+- `document_links` - Filter by document links (matches any)
 - `due_before` / `due_after` - Filter by due date range
 - `include_completed` - Include/exclude completed tasks (default: true)
 - `limit` / `offset` - Pagination
@@ -278,7 +308,8 @@ curl -X POST "http://localhost:8000/api/tasks" \
     "title": "Review PR #123",
     "description": "Review and approve the authentication feature PR",
     "priority": "high",
-    "tags": ["code-review", "urgent"]
+    "tags": ["code-review", "urgent"],
+    "document_links": ["https://github.com/user/repo/pull/123"]
   }'
 ```
 
