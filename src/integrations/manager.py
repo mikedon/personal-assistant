@@ -2,6 +2,7 @@
 
 import asyncio
 import logging
+from dataclasses import dataclass
 from typing import Any, Callable
 
 from src.integrations.base import ActionableItem, BaseIntegration, IntegrationType
@@ -16,8 +17,24 @@ logger = logging.getLogger(__name__)
 HttpLogCallback = Callable[[str, str, int | None, float | None, str | None, str | None], None]
 
 
+@dataclass(frozen=True)
+class IntegrationKey:
+    """Key for integration lookup in multi-account setups.
+
+    Provides a typed, structured key for the integrations dictionary instead of
+    using raw tuples. Frozen for use as dict key.
+    """
+
+    type: IntegrationType
+    account_id: str
+
+    def __str__(self) -> str:
+        """Return string representation of the key."""
+        return f"{self.type.value}:{self.account_id}"
+
+
 class IntegrationManager:
-    """Manages all external service integrations."""
+    """Manages all external service integrations with multi-account support."""
 
     def __init__(self, config: dict[str, Any], http_log_callback: HttpLogCallback | None = None):
         """Initialize integration manager.
@@ -28,65 +45,109 @@ class IntegrationManager:
         """
         self.config = config
         self._http_log_callback = http_log_callback
-        self.integrations: dict[IntegrationType, BaseIntegration] = {}
+        # Multi-account support with structured IntegrationKey
+        self.integrations: dict[IntegrationKey, BaseIntegration] = {}
         self._initialize_integrations()
 
     def _initialize_integrations(self) -> None:
         """Initialize all configured integrations."""
-        # Gmail
-        gmail_config = self.config.get("google", {})
-        if gmail_config.get("enabled", False):
-            try:
-                integration = GmailIntegration(gmail_config)
-                integration.set_http_log_callback(self._http_log_callback)
-                self.integrations[IntegrationType.GMAIL] = integration
-                logger.info("Gmail integration initialized")
-            except Exception as e:
-                logger.error(f"Failed to initialize Gmail integration: {e}")
+        # Gmail - support multiple accounts
+        google_config = self.config.get("google", {})
+        if google_config.get("enabled", False):
+            accounts = google_config.get("accounts", [])
 
-        # Slack
+            # Handle legacy single-account config (already migrated by config loader)
+            if not accounts and "credentials_path" in google_config:
+                # Fallback for unmigrated configs
+                accounts = [{
+                    "account_id": "default",
+                    "credentials_path": google_config["credentials_path"],
+                    "token_path": google_config.get("token_path", "token.json"),
+                    "gmail": google_config.get("gmail", {}),
+                }]
+
+            for account_config in accounts:
+                if not account_config.get("enabled", True):
+                    logger.info(f"Skipping disabled Google account: {account_config.get('account_id')}")
+                    continue
+
+                try:
+                    # Import GoogleAccountConfig for type checking
+                    from src.utils.config import GoogleAccountConfig
+
+                    # Convert dict to Pydantic model if needed
+                    if isinstance(account_config, dict):
+                        account = GoogleAccountConfig(**account_config)
+                    else:
+                        account = account_config
+
+                    # Initialize Gmail integration for this account
+                    integration = GmailIntegration(account_config=account)
+                    integration.set_http_log_callback(self._http_log_callback)
+
+                    # Store with IntegrationKey
+                    key = IntegrationKey(IntegrationType.GMAIL, account.account_id)
+
+                    # Check for duplicate account_id
+                    if key in self.integrations:
+                        logger.error(
+                            f"Duplicate account_id '{account.account_id}' for {IntegrationType.GMAIL.value}. "
+                            f"Skipping duplicate configuration."
+                        )
+                        continue
+
+                    self.integrations[key] = integration
+
+                    logger.info(f"Gmail integration initialized for account: {account.account_id}")
+
+                except Exception as e:
+                    logger.error(
+                        f"Failed to initialize Gmail for {account_config.get('account_id')}: {e}"
+                    )
+
+        # Slack - single account for now (can be extended later)
         slack_config = self.config.get("slack", {})
         if slack_config.get("enabled", False):
             try:
                 integration = SlackIntegration(slack_config)
                 integration.set_http_log_callback(self._http_log_callback)
-                self.integrations[IntegrationType.SLACK] = integration
+                # Use "default" as account_id for single-account integrations
+                key = IntegrationKey(IntegrationType.SLACK, "default")
+                self.integrations[key] = integration
                 logger.info("Slack integration initialized")
             except Exception as e:
                 logger.error(f"Failed to initialize Slack integration: {e}")
 
-        # Calendar and Drive would be added similarly
-        # self.integrations[IntegrationType.CALENDAR] = CalendarIntegration(...)
-        # self.integrations[IntegrationType.DRIVE] = DriveIntegration(...)
-
-    async def poll_all(self) -> dict[IntegrationType, list[ActionableItem]]:
+    async def poll_all(self) -> list[ActionableItem]:
         """Poll all enabled integrations for actionable items.
 
         Returns:
-            Dict mapping integration type to list of actionable items found.
+            Combined list of actionable items from all integrations.
         """
-        results = {}
+        all_items = []
 
-        for integration_type, integration in self.integrations.items():
+        for key, integration in self.integrations.items():
             if not integration.enabled:
                 continue
 
             try:
-                logger.info(f"Polling {integration_type.value}...")
+                logger.info(f"Polling {key}...")
                 items = await integration.poll()
-                results[integration_type] = items
-                logger.info(f"Found {len(items)} actionable items from {integration_type.value}")
+                all_items.extend(items)
+                logger.info(
+                    f"Found {len(items)} actionable items from {key}"
+                )
             except Exception as e:
-                logger.error(f"Error polling {integration_type.value}: {e}")
-                results[integration_type] = []
+                logger.error(f"Error polling {key}: {e}")
 
-        return results
+        return all_items
 
-    async def poll_one(self, integration_type: IntegrationType) -> list[ActionableItem]:
-        """Poll a specific integration.
+    async def poll_one(self, integration_type: IntegrationType, account_id: str = "default") -> list[ActionableItem]:
+        """Poll a specific integration account.
 
         Args:
             integration_type: The integration to poll
+            account_id: The account identifier (default: "default")
 
         Returns:
             List of actionable items found.
@@ -94,51 +155,116 @@ class IntegrationManager:
         Raises:
             ValueError: If integration is not configured
         """
-        integration = self.integrations.get(integration_type)
+        key = IntegrationKey(integration_type, account_id)
+        integration = self.integrations.get(key)
         if not integration:
-            raise ValueError(f"Integration {integration_type.value} not configured")
+            raise ValueError(
+                f"Integration {integration_type.value}:{account_id} not configured"
+            )
 
         return await integration.poll()
 
-    async def test_connections(self) -> dict[IntegrationType, bool]:
-        """Test connections to all configured integrations.
-
-        Returns:
-            Dict mapping integration type to connection status.
-        """
-        results = {}
-
-        for integration_type, integration in self.integrations.items():
-            try:
-                results[integration_type] = await integration.test_connection()
-            except Exception as e:
-                logger.error(f"Error testing {integration_type.value}: {e}")
-                results[integration_type] = False
-
-        return results
-
-    def get_integration(self, integration_type: IntegrationType) -> BaseIntegration | None:
-        """Get a specific integration.
+    async def poll_account(
+        self,
+        integration_type: IntegrationType,
+        account_id: str,
+    ) -> list[ActionableItem]:
+        """Poll a specific account.
 
         Args:
             integration_type: The integration type
+            account_id: The account identifier
+
+        Returns:
+            List of actionable items found.
+
+        Raises:
+            ValueError: If integration account not found
+        """
+        key = IntegrationKey(integration_type, account_id)
+        integration = self.integrations.get(key)
+
+        if not integration:
+            raise ValueError(
+                f"Integration not found: {integration_type.value}:{account_id}"
+            )
+
+        logger.info(f"Polling {integration_type.value}:{account_id}")
+        return await integration.poll()
+
+    async def test_connections(self) -> dict[IntegrationKey, bool]:
+        """Test connections to all configured integrations.
+
+        Returns:
+            Dictionary mapping IntegrationKey to connection test result (True=success).
+        """
+        results = {}
+
+        for key, integration in self.integrations.items():
+            try:
+                results[key] = await integration.test_connection()
+            except Exception as e:
+                logger.error(f"Error testing {key}: {e}")
+                results[key] = False
+
+        return results
+
+    def get_integration(
+        self,
+        integration_type: IntegrationType,
+        account_id: str = "default",
+    ) -> BaseIntegration | None:
+        """Get a specific integration instance.
+
+        Args:
+            integration_type: The integration type
+            account_id: The account identifier (default: "default")
 
         Returns:
             The integration instance or None if not configured.
         """
-        return self.integrations.get(integration_type)
+        key = IntegrationKey(integration_type, account_id)
+        return self.integrations.get(key)
 
-    def is_enabled(self, integration_type: IntegrationType) -> bool:
-        """Check if an integration is enabled.
+    def list_accounts(self, integration_type: IntegrationType) -> list[str]:
+        """List all account IDs for a given integration type.
 
         Args:
             integration_type: The integration type
 
         Returns:
+            List of account IDs configured for this integration type.
+        """
+        return [
+            key.account_id
+            for key in self.integrations.keys()
+            if key.type == integration_type
+        ]
+
+    def is_enabled(
+        self,
+        integration_type: IntegrationType,
+        account_id: str | None = None,
+    ) -> bool:
+        """Check if an integration/account is enabled.
+
+        Args:
+            integration_type: The integration type
+            account_id: Optional specific account ID. If None, checks if ANY account exists.
+
+        Returns:
             True if enabled, False otherwise.
         """
-        integration = self.integrations.get(integration_type)
-        return integration is not None and integration.enabled
+        if account_id:
+            key = IntegrationKey(integration_type, account_id)
+            integration = self.integrations.get(key)
+            return integration is not None and integration.enabled
+        else:
+            # Check if ANY account exists for this integration type
+            return any(
+                key.type == integration_type
+                for key in self.integrations.keys()
+            )
 
     @staticmethod
     def actionable_item_to_task_params(item: ActionableItem) -> dict[str, Any]:
@@ -166,12 +292,16 @@ class IntegrationManager:
             "low": TaskPriority.LOW,
         }
 
+        # Get account_id directly from ActionableItem
+        account_id = item.account_id
+
         return {
             "title": item.title,
             "description": item.description,
             "priority": priority_mapping.get(item.priority, TaskPriority.MEDIUM),
             "source": source_mapping.get(item.source, TaskSource.AGENT),
             "source_reference": item.source_reference,
+            "account_id": account_id,  # NEW: Include account_id
             "due_date": item.due_date,
             "tags": item.tags or [],
         }

@@ -49,6 +49,7 @@ class TaskResponse(TaskBase):
     status: TaskStatus
     source: TaskSource
     source_reference: str | None
+    account_id: str | None
     priority_score: float
     created_at: datetime
     updated_at: datetime

@@ -485,6 +485,78 @@ def _display_suggestion(suggestion, number: int, remaining: int) -> None:
     console.print(Panel("\n".join(lines), title=f"Suggestion #{number}", border_style="cyan"))
 
 
+# --- Account Commands ---
+
+
+@cli.group()
+def accounts():
+    """Manage Google account connections."""
+    pass
+
+
+@accounts.command("list")
+def accounts_list():
+    """List all connected Google accounts."""
+    config = get_config()
+    google_config = config.google
+
+    if not google_config.enabled or not google_config.accounts:
+        console.print("[yellow]No Google accounts configured[/yellow]")
+        return
+
+    table = Table(title="Connected Google Accounts")
+    table.add_column("Account ID", style="cyan")
+    table.add_column("Display Name", style="green")
+    table.add_column("Status", style="yellow")
+    table.add_column("Polling Interval", style="magenta")
+
+    for account in google_config.accounts:
+        status = "✓ Enabled" if account.enabled else "✗ Disabled"
+        table.add_row(
+            account.account_id,
+            account.display_name,
+            status,
+            f"{account.polling_interval_minutes} min",
+        )
+
+    console.print(table)
+
+
+@accounts.command("authenticate")
+@click.argument("account_id")
+def accounts_authenticate(account_id: str):
+    """Run OAuth flow for a specific account."""
+    config = get_config()
+
+    # Find account config
+    account_config = next(
+        (acc for acc in config.google.accounts if acc.account_id == account_id),
+        None,
+    )
+
+    if not account_config:
+        console.print(f"[red]Account not found: {account_id}[/red]")
+        return
+
+    # Run OAuth flow
+    from src.integrations.oauth_utils import GoogleOAuthManager
+
+    try:
+        oauth_manager = GoogleOAuthManager(
+            credentials_path=account_config.credentials_path,
+            token_path=account_config.token_path,
+            scopes=account_config.scopes,
+        )
+
+        creds = oauth_manager.get_credentials()
+        if creds:
+            console.print(f"[green]✓ Successfully authenticated {account_id}[/green]")
+        else:
+            console.print(f"[red]✗ Authentication failed for {account_id}[/red]")
+    except Exception as e:
+        console.print(f"[red]✗ Authentication error: {e}[/red]")
+
+
 # --- Task Commands ---
 
 
@@ -499,10 +571,11 @@ def tasks():
               help="Filter by status")
 @click.option("--priority", "-p", type=click.Choice([p.value for p in TaskPriority]),
               help="Filter by priority")
+@click.option("--account", "-a", "account_id", help="Filter by source account ID")
 @click.option("--initiative", "-i", type=int, help="Filter by initiative ID")
-@click.option("--all", "-a", "show_all", is_flag=True, help="Include completed tasks")
+@click.option("--all", "show_all", is_flag=True, help="Include completed tasks")
 @click.option("--limit", "-n", default=20, help="Number of tasks to show")
-def tasks_list(status, priority, initiative, show_all, limit):
+def tasks_list(status, priority, account_id, initiative, show_all, limit):
     """List tasks."""
     with get_db_session() as db:
         service = TaskService(db)
@@ -514,6 +587,7 @@ def tasks_list(status, priority, initiative, show_all, limit):
         tasks, total = service.get_tasks(
             status=status_filter,
             priority=priority_filter,
+            account_id=account_id,
             include_completed=show_all,
             limit=limit,
         )

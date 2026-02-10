@@ -325,9 +325,17 @@ class AutonomousAgent:
 
         try:
             # Poll all integrations
-            poll_results = await self.integration_manager.poll_all()
+            all_items = await self.integration_manager.poll_all()
 
-            for integration_type, items in poll_results.items():
+            # Group items by integration type for processing
+            from collections import defaultdict
+            items_by_integration: dict[IntegrationType, list[ActionableItem]] = defaultdict(list)
+            for item in all_items:
+                if item.source:
+                    items_by_integration[item.source].append(item)
+
+            # Process each integration's items
+            for integration_type, items in items_by_integration.items():
                 start_time = time.time()
 
                 result = PollResult(

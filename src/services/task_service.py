@@ -4,8 +4,9 @@ from datetime import UTC, datetime, timedelta
 from typing import Sequence
 
 from sqlalchemy import and_, func, or_
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 
+from src.exceptions import AccountNotFoundError
 from src.models.initiative import InitiativePriority, InitiativeStatus
 from src.models.task import Task, TaskPriority, TaskSource, TaskStatus
 
@@ -13,8 +14,17 @@ from src.models.task import Task, TaskPriority, TaskSource, TaskStatus
 class TaskService:
     """Service for task management operations."""
 
-    def __init__(self, db: Session):
+    def __init__(self, db: Session, integration_manager=None):
+        """Initialize TaskService.
+
+        Args:
+            db: Database session
+            integration_manager: Optional IntegrationManager for account validation.
+                If not provided, will be lazy-loaded when needed.
+        """
         self.db = db
+        self._integration_manager = integration_manager
+        self._valid_accounts: set[str] | None = None
 
     def get_task(self, task_id: int) -> Task | None:
         """Get a task by ID."""
@@ -26,6 +36,7 @@ class TaskService:
         status: TaskStatus | list[TaskStatus] | None = None,
         priority: TaskPriority | list[TaskPriority] | None = None,
         source: TaskSource | None = None,
+        account_id: str | None = None,
         tags: list[str] | None = None,
         search: str | None = None,
         due_before: datetime | None = None,
@@ -40,6 +51,9 @@ class TaskService:
             Tuple of (tasks, total_count)
         """
         query = self.db.query(Task)
+
+        # Add eager loading for initiative to avoid N+1 queries
+        query = query.options(joinedload(Task.initiative))
 
         # Status filter
         if status is not None:
@@ -60,6 +74,10 @@ class TaskService:
         # Source filter
         if source is not None:
             query = query.filter(Task.source == source)
+
+        # Account ID filter
+        if account_id is not None:
+            query = query.filter(Task.account_id == account_id)
 
         # Tags filter (matches any of the provided tags)
         if tags:
@@ -99,6 +117,7 @@ class TaskService:
         """Get top priority tasks that are actionable (pending or in progress)."""
         return (
             self.db.query(Task)
+            .options(joinedload(Task.initiative))
             .filter(Task.status.in_([TaskStatus.PENDING, TaskStatus.IN_PROGRESS]))
             .order_by(Task.priority_score.desc())
             .limit(limit)
@@ -110,6 +129,7 @@ class TaskService:
         now = datetime.now(UTC).replace(tzinfo=None)
         return (
             self.db.query(Task)
+            .options(joinedload(Task.initiative))
             .filter(
                 and_(
                     Task.due_date < now,
@@ -126,6 +146,7 @@ class TaskService:
         soon = now + timedelta(days=days)
         return (
             self.db.query(Task)
+            .options(joinedload(Task.initiative))
             .filter(
                 and_(
                     Task.due_date >= now,
@@ -144,17 +165,41 @@ class TaskService:
         priority: TaskPriority = TaskPriority.MEDIUM,
         source: TaskSource = TaskSource.MANUAL,
         source_reference: str | None = None,
+        account_id: str | None = None,
         due_date: datetime | None = None,
         tags: list[str] | None = None,
         initiative_id: int | None = None,
     ) -> Task:
-        """Create a new task with calculated priority score."""
+        """Create a new task with calculated priority score.
+
+        Args:
+            title: Task title
+            description: Task description
+            priority: Task priority level
+            source: Source of the task (email, manual, etc.)
+            source_reference: Reference ID in source system
+            account_id: Account identifier (validated before any DB operations)
+            due_date: Task due date
+            tags: List of tags
+            initiative_id: Associated initiative ID
+
+        Returns:
+            Created task
+
+        Raises:
+            AccountNotFoundError: If account_id is provided but not configured
+        """
+        # Validate account_id if provided
+        if account_id:
+            self._validate_account_id(account_id)
+
         task = Task(
             title=title,
             description=description,
             priority=priority,
             source=source,
             source_reference=source_reference,
+            account_id=account_id,
             due_date=due_date,
             initiative_id=initiative_id,
         )
@@ -168,6 +213,47 @@ class TaskService:
         self.db.refresh(task)
 
         return task
+
+    def _get_valid_accounts(self) -> set[str]:
+        """Lazy-load and cache valid account IDs.
+
+        Returns:
+            Set of valid account_ids from all integrations.
+        """
+        if self._valid_accounts is None:
+            if self._integration_manager is None:
+                # Lazy-load manager if not provided
+                from src.integrations.base import IntegrationType
+                from src.integrations.manager import IntegrationManager
+                from src.utils.config import load_config
+
+                config = load_config()
+                self._integration_manager = IntegrationManager(config)
+
+            # Collect all configured account_ids
+            all_accounts = []
+            from src.integrations.base import IntegrationType
+            for integration_type in IntegrationType:
+                all_accounts.extend(self._integration_manager.list_accounts(integration_type))
+            self._valid_accounts = set(all_accounts)
+
+        return self._valid_accounts
+
+    def _validate_account_id(self, account_id: str) -> None:
+        """Validate that account_id exists in configuration.
+
+        Args:
+            account_id: Account identifier to validate
+
+        Raises:
+            AccountNotFoundError: If account_id is not configured
+        """
+        valid_accounts = self._get_valid_accounts()
+        if account_id not in valid_accounts:
+            raise AccountNotFoundError(
+                f"Invalid account_id: {account_id}. "
+                f"Configured accounts: {', '.join(sorted(valid_accounts)) if valid_accounts else 'none'}"
+            )
 
     def update_task(
         self,
@@ -230,7 +316,12 @@ class TaskService:
         self, task_ids: list[int], status: TaskStatus
     ) -> list[Task]:
         """Update status for multiple tasks."""
-        tasks = self.db.query(Task).filter(Task.id.in_(task_ids)).all()
+        tasks = (
+            self.db.query(Task)
+            .options(joinedload(Task.initiative))
+            .filter(Task.id.in_(task_ids))
+            .all()
+        )
 
         now = datetime.now(UTC) if status == TaskStatus.COMPLETED else None
 
@@ -264,6 +355,7 @@ class TaskService:
         """
         tasks = (
             self.db.query(Task)
+            .options(joinedload(Task.initiative))
             .filter(Task.status.in_([TaskStatus.PENDING, TaskStatus.IN_PROGRESS]))
             .all()
         )
@@ -349,25 +441,24 @@ class TaskService:
         )
 
         # Average completion time (for completed tasks with timestamps)
-        completed_with_dates = (
-            self.db.query(Task)
+        # Use SQL aggregation instead of loading all tasks into memory
+        avg_completion_seconds = (
+            self.db.query(
+                func.avg(
+                    func.julianday(Task.completed_at) - func.julianday(Task.created_at)
+                ) * 86400  # Convert days to seconds
+            )
             .filter(
                 and_(
                     Task.status == TaskStatus.COMPLETED,
                     Task.completed_at.isnot(None),
+                    Task.created_at.isnot(None),
                 )
             )
-            .all()
+            .scalar()
         )
 
-        avg_completion_hours = None
-        if completed_with_dates:
-            total_hours = sum(
-                (task.completed_at - task.created_at).total_seconds() / 3600
-                for task in completed_with_dates
-                if task.completed_at and task.created_at
-            )
-            avg_completion_hours = total_hours / len(completed_with_dates)
+        avg_completion_hours = avg_completion_seconds / 3600 if avg_completion_seconds else None
 
         return {
             "total": total,

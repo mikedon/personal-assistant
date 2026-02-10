@@ -12,6 +12,24 @@ A personal assistant agent that helps track tasks, monitors multiple data source
 - **Local Operation**: Runs entirely on your machine with SQLite storage
 - **Configurable**: YAML-based configuration for easy customization
 
+## Security Model
+
+**Important:** This tool is designed for **single-user local operation** only. It runs on your personal machine and stores all data locally in SQLite.
+
+**Security Assumptions:**
+- **Single User:** The tool assumes it is used by one person on their own machine
+- **Local Access:** API and CLI access is not authenticated - anyone with access to your machine can use the tool
+- **Multi-Account Support:** Multiple Google accounts can be configured (e.g., personal and work), but all are accessible to anyone using the tool locally
+- **OAuth Tokens:** OAuth refresh tokens are stored locally with restricted file permissions (0600) to prevent access by other users on the same machine
+
+**Not Suitable For:**
+- Multi-user environments without proper OS-level access controls
+- Shared servers or systems where untrusted users have access
+- Public-facing deployments without adding authentication layer
+
+**Future Enhancements:**
+Multi-user authentication and authorization may be added in a future release for shared/hosted deployments.
+
 ## Installation
 
 ### Prerequisites
@@ -57,6 +75,50 @@ cp config.example.yaml config.yaml
    - Configure Google OAuth credentials (for Gmail, Calendar, Drive)
    - Add Slack tokens (for Slack integration)
    - Adjust agent behavior settings
+
+#### Multi-Account Google Setup
+
+The assistant supports multiple Google accounts (e.g., personal and work) simultaneously:
+
+1. **Configure multiple accounts** in `config.yaml`:
+```yaml
+google:
+  enabled: true
+  accounts:
+    - account_id: "personal"
+      display_name: "Personal Gmail"
+      credentials_path: "credentials.personal.json"
+      token_path: "token.personal.json"
+      polling_interval_minutes: 15
+      gmail:
+        inbox_type: "unread"
+        # ... other Gmail settings
+
+    - account_id: "work"
+      display_name: "Work Gmail"
+      credentials_path: "credentials.work.json"
+      token_path: "token.work.json"
+      polling_interval_minutes: 5
+      gmail:
+        inbox_type: "important"
+        include_senders: ["@company.com"]
+        # ... other Gmail settings
+```
+
+2. **Authenticate each account**:
+```bash
+pa accounts list                    # Show all configured accounts
+pa accounts authenticate personal   # Run OAuth for personal account
+pa accounts authenticate work       # Run OAuth for work account
+```
+
+3. **Filter tasks by account**:
+```bash
+pa tasks list --account personal   # Show only personal account tasks
+pa tasks list --account work       # Show only work account tasks
+```
+
+Tasks created from each account are automatically tagged with the account ID, allowing you to separate personal and work tasks.
 
 ## Usage
 

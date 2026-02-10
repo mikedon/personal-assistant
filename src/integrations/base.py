@@ -42,18 +42,21 @@ class ActionableItem:
     priority: str = "medium"  # Will be mapped to TaskPriority
     tags: list[str] | None = None
     metadata: dict[str, Any] | None = None  # Additional context
+    account_id: str | None = None  # Account identifier for multi-account integrations
 
 
 class BaseIntegration(ABC):
     """Base class for all integrations."""
 
-    def __init__(self, config: dict[str, Any]):
+    def __init__(self, config: dict[str, Any], account_id: str | None = None):
         """Initialize the integration with configuration.
 
         Args:
             config: Integration-specific configuration
+            account_id: Optional account identifier for multi-account support
         """
         self.config = config
+        self.account_id = account_id
         self.enabled = config.get("enabled", True)
         self._last_poll: datetime | None = None
         self._http_log_callback: HttpLogCallback | None = None

@@ -70,11 +70,42 @@ class GoogleOAuthManager:
         return self._creds
 
     def _save_credentials(self) -> None:
-        """Save credentials to token file."""
-        if self._creds:
+        """Save credentials to token file with restricted permissions.
+
+        Raises:
+            IOError: If unable to create directory or save token file.
+        """
+        if not self._creds:
+            return
+
+        try:
+            # Create parent directory with restricted permissions
             self.token_path.parent.mkdir(parents=True, exist_ok=True)
-            with open(self.token_path, "w") as token:
-                token.write(self._creds.to_json())
+            os.chmod(self.token_path.parent, 0o700)
+
+            # Atomically create file with secure permissions (0600)
+            # This prevents race condition where file could be world-readable
+            fd = os.open(
+                self.token_path,
+                os.O_WRONLY | os.O_CREAT | os.O_TRUNC,
+                0o600
+            )
+            try:
+                with os.fdopen(fd, 'w') as token:
+                    token.write(self._creds.to_json())
+            except:
+                os.close(fd)  # Clean up fd if fdopen fails
+                raise
+        except PermissionError as e:
+            raise IOError(
+                f"Permission denied saving OAuth token to {self.token_path}. "
+                f"Ensure the directory is writable: {self.token_path.parent}"
+            ) from e
+        except OSError as e:
+            raise IOError(
+                f"Failed to save OAuth token to {self.token_path}. "
+                f"Check disk space and permissions. Error: {e}"
+            ) from e
 
     def is_authenticated(self) -> bool:
         """Check if we have valid credentials.

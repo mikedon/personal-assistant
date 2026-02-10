@@ -75,6 +75,11 @@ class Task(Base):
     # Reference to source (e.g., email ID, Slack message ID)
     source_reference: Mapped[str | None] = mapped_column(String(500), nullable=True)
 
+    # Account identifier for multi-account integrations (e.g., "personal", "work")
+    account_id: Mapped[str | None] = mapped_column(
+        String(100), nullable=True, index=True
+    )
+
     # Tags for categorization (stored as comma-separated string)
     tags: Mapped[str | None] = mapped_column(String(500), nullable=True)
 
