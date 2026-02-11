@@ -1,13 +1,14 @@
 # Personal Assistant
 
-A personal assistant agent that helps track tasks, monitors multiple data sources (email, calendar, Slack, meeting notes), and provides productivity recommendations.
+A personal assistant agent that helps track tasks, monitors multiple data sources (email, calendar, Slack, Granola meeting notes), and provides productivity recommendations.
 
 ## Features
 
 - **Task Management**: Create, update, and prioritize tasks with automatic scoring
 - **Voice Input**: Create tasks by speaking - uses Whisper for transcription and LLM for task extraction
-- **Multi-Source Monitoring**: Track important information from email, Slack, calendar, and Google Drive
+- **Multi-Source Monitoring**: Track important information from email, Slack, calendar, Google Drive, and Granola meeting notes
 - **AI-Powered Agent**: Uses LLM to extract tasks and generate productivity recommendations
+- **Meeting Notes Integration**: Automatically scan Granola meeting notes for action items
 - **API-First Design**: RESTful API for programmatic access
 - **Local Operation**: Runs entirely on your machine with SQLite storage
 - **Configurable**: YAML-based configuration for easy customization
@@ -119,6 +120,38 @@ pa tasks list --account work       # Show only work account tasks
 ```
 
 Tasks created from each account are automatically tagged with the account ID, allowing you to separate personal and work tasks.
+
+#### Granola Meeting Notes Setup
+
+The assistant can automatically scan your Granola meeting notes for actionable items and create tasks:
+
+1. **Install Granola**: Make sure the Granola desktop app is installed and has synced meeting notes
+
+2. **Configure Granola integration** in `config.yaml`:
+```yaml
+granola:
+  enabled: true
+  workspaces:
+    - workspace_id: "all"  # Scan all workspaces
+      display_name: "All Workspaces"
+      enabled: true
+      lookback_days: 7  # Scan notes from last 7 days
+      polling_interval_minutes: 15  # Check for new notes every 15 minutes
+```
+
+3. **Cache File Location**: The integration reads from Granola's local cache file:
+   - macOS: `~/Library/Application Support/Granola/cache-v3.json`
+   - Windows: `%APPDATA%\Granola\cache-v3.json`
+   - Linux: `~/.config/Granola/cache-v3.json`
+
+4. **What It Does**:
+   - Scans Granola meeting notes for action items using LLM
+   - Extracts tasks with context (attendees, meeting title, notes)
+   - Tracks processed notes to avoid duplicates
+   - Links tasks back to original meeting notes
+   - Supports multiple workspaces
+
+**Privacy Note**: The integration reads from your local Granola cache file - no API calls are made to Granola's servers. All processing happens locally.
 
 ## Usage
 
