@@ -114,6 +114,53 @@ class SlackConfig(BaseModel):
     channels: list[str] = Field(default=[], description="Channels to monitor")
 
 
+class GranolaWorkspaceConfig(BaseModel):
+    """Configuration for a Granola workspace."""
+
+    workspace_id: str = Field(..., description="Workspace ID or 'all' to scan all workspaces")
+    display_name: str = Field(default="", description="Friendly name for this workspace")
+    enabled: bool = Field(default=True, description="Enable/disable this workspace")
+    lookback_days: int = Field(
+        default=7,
+        ge=1,
+        le=90,
+        description="How many days back to scan for new notes",
+    )
+    polling_interval_minutes: int = Field(
+        default=15,
+        ge=1,
+        le=1440,
+        description="Polling frequency in minutes",
+    )
+
+    @field_validator("workspace_id")
+    @classmethod
+    def validate_workspace_id(cls, v: str) -> str:
+        """Validate workspace ID format."""
+        if v != "all" and not v.replace("_", "").replace("-", "").isalnum():
+            raise ValueError("workspace_id must be 'all' or alphanumeric with - and _")
+        return v.lower()
+
+
+class GranolaConfig(BaseModel):
+    """Granola integration configuration."""
+
+    enabled: bool = Field(default=False, description="Enable Granola integration")
+    workspaces: list[GranolaWorkspaceConfig] = Field(
+        default=[],
+        description="List of Granola workspaces to monitor",
+    )
+
+    @field_validator("workspaces")
+    @classmethod
+    def validate_unique_workspace_ids(cls, v: list[GranolaWorkspaceConfig]) -> list[GranolaWorkspaceConfig]:
+        """Ensure workspace IDs are unique."""
+        ids = [w.workspace_id for w in v]
+        if len(ids) != len(set(ids)):
+            raise ValueError("workspace_id values must be unique")
+        return v
+
+
 class NotificationConfig(BaseModel):
     """Notification configuration."""
 
@@ -159,6 +206,7 @@ class Config(BaseSettings):
     database: DatabaseConfig = Field(default_factory=DatabaseConfig)
     google: GoogleConfig = Field(default_factory=GoogleConfig)
     slack: SlackConfig = Field(default_factory=SlackConfig)
+    granola: GranolaConfig = Field(default_factory=GranolaConfig)
     agent: AgentConfig = Field(default_factory=AgentConfig)
     notifications: NotificationConfig = Field(default_factory=NotificationConfig)
     voice: VoiceConfig = Field(default_factory=VoiceConfig)
