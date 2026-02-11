@@ -3,12 +3,13 @@
 import json
 import logging
 import os
+import stat
 import sys
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
-from sqlalchemy.orm import Session
+from sqlalchemy.exc import IntegrityError
 
 from src.integrations.base import (
     ActionableItem,
@@ -16,6 +17,7 @@ from src.integrations.base import (
     AuthenticationError,
     BaseIntegration,
     IntegrationType,
+    PollError,
 )
 from src.models import ProcessedGranolaNote
 
@@ -32,7 +34,6 @@ class GranolaIntegration(BaseIntegration):
 
     CACHE_PATHS = {
         "darwin": Path.home() / "Library/Application Support/Granola/cache-v3.json",
-        "win32": Path(os.environ.get("APPDATA", "")) / "Granola/cache-v3.json",
         "linux": Path.home() / ".config/Granola/cache-v3.json",
     }
 
@@ -40,17 +41,14 @@ class GranolaIntegration(BaseIntegration):
         self,
         config: dict[str, Any],
         account_id: str,
-        db_session: Session,
     ):
         """Initialize Granola integration.
 
         Args:
             config: Workspace configuration dict
             account_id: Workspace identifier
-            db_session: Database session for querying processed notes
         """
         super().__init__(config, account_id)
-        self.db = db_session
         self.workspace_id = config.get("workspace_id", "default")
         self.lookback_days = config.get("lookback_days", 7)
         self.cache_path = self._get_cache_path()
@@ -61,22 +59,88 @@ class GranolaIntegration(BaseIntegration):
         return IntegrationType.GRANOLA
 
     def _get_cache_path(self) -> Path:
-        """Get cache file path for current platform."""
-        platform = sys.platform
-        cache_path = self.CACHE_PATHS.get(platform)
+        """Get cache file path for current platform with validation.
 
+        Returns:
+            Validated cache file path
+
+        Raises:
+            ValueError: If platform unsupported or APPDATA invalid on Windows
+        """
+        platform = sys.platform
+
+        # Handle Windows with APPDATA validation (P1 Fix #001)
+        if platform == "win32":
+            appdata = os.environ.get("APPDATA")
+            if not appdata:
+                raise ValueError(
+                    "APPDATA environment variable not set. "
+                    "This is required on Windows for Granola cache access."
+                )
+
+            appdata_path = Path(appdata)
+            if not appdata_path.is_absolute():
+                raise ValueError(
+                    f"APPDATA must be an absolute path, got: {appdata}. "
+                    "This could indicate a security issue."
+                )
+
+            # Normalize path to prevent traversal attacks
+            cache_path = appdata_path.resolve() / "Granola/cache-v3.json"
+            return cache_path
+
+        # Handle macOS and Linux
+        cache_path = self.CACHE_PATHS.get(platform)
         if not cache_path:
             raise ValueError(f"Unsupported platform: {platform}")
 
         return cache_path
 
     async def authenticate(self) -> bool:
-        """Verify cache file exists and is readable."""
+        """Verify cache file exists and is readable with security checks.
+
+        Returns:
+            True if authentication successful
+
+        Raises:
+            AuthenticationError: If cache file missing, invalid, or insecure
+        """
         if not self.cache_path.exists():
             raise AuthenticationError(
                 f"Granola cache file not found at {self.cache_path}. "
                 "Ensure Granola desktop app is installed and has synced notes."
             )
+
+        # P1 Fix #002: Security checks for symlinks and permissions
+        # Check if symlink (security risk)
+        if self.cache_path.is_symlink():
+            raise AuthenticationError(
+                f"Cache file {self.cache_path} is a symbolic link. "
+                "For security reasons, symlinks are not allowed."
+            )
+
+        # Check file permissions and ownership (Unix-like systems)
+        if hasattr(os, 'stat'):
+            try:
+                file_stat = self.cache_path.stat()
+
+                # Warn if world-readable (privacy concern)
+                if file_stat.st_mode & stat.S_IROTH:
+                    logger.warning(
+                        f"Cache file {self.cache_path} is world-readable. "
+                        "Consider setting permissions to 600 for privacy: "
+                        f"chmod 600 {self.cache_path}"
+                    )
+
+                # Verify ownership on Unix systems (not Windows)
+                if hasattr(file_stat, 'st_uid') and hasattr(os, 'getuid'):
+                    if file_stat.st_uid != os.getuid():
+                        raise AuthenticationError(
+                            f"Cache file {self.cache_path} does not belong to current user. "
+                            "This could indicate a security issue or misconfiguration."
+                        )
+            except OSError as e:
+                logger.warning(f"Could not check file permissions: {e}")
 
         try:
             with open(self.cache_path) as f:
@@ -93,7 +157,14 @@ class GranolaIntegration(BaseIntegration):
             raise AuthenticationError(f"Failed to read Granola cache: {e}")
 
     async def poll(self) -> list[ActionableItem]:
-        """Poll for new meeting notes from local cache."""
+        """Poll for new meeting notes from local cache.
+
+        Returns:
+            List of actionable items from unprocessed notes
+
+        Raises:
+            PollError: If polling fails for any reason
+        """
         try:
             # Read cache file
             notes = self._read_cache()
@@ -116,9 +187,14 @@ class GranolaIntegration(BaseIntegration):
 
             return items
 
+        except (FileNotFoundError, json.JSONDecodeError, PermissionError) as e:
+            # Expected errors - cache file issues
+            raise PollError(f"Failed to read Granola cache: {e}")
+
         except Exception as e:
-            logger.error(f"Error polling Granola: {e}")
-            return []
+            # Unexpected errors - programming bugs, database issues
+            logger.error(f"Unexpected error polling Granola: {e}", exc_info=True)
+            raise PollError(f"Unexpected error polling Granola: {e}")
 
     def _read_cache(self) -> list[dict]:
         """Read and parse Granola cache file."""
@@ -167,17 +243,33 @@ class GranolaIntegration(BaseIntegration):
         return notes
 
     def _filter_new_notes(self, notes: list[dict]) -> list[dict]:
-        """Filter out notes that have already been processed."""
+        """Filter out notes that have already been processed.
+
+        P1 Fix #003: Uses per-operation session instead of stored session.
+
+        Args:
+            notes: List of note dictionaries from cache
+
+        Returns:
+            List of notes that haven't been processed yet
+        """
+        from src.models.database import get_db_session
+
+        if not notes:
+            return []
+
         note_ids = [note["id"] for note in notes]
 
-        # Query processed notes
-        processed = set(
-            row[0]
-            for row in self.db.query(ProcessedGranolaNote.note_id)
-            .filter(ProcessedGranolaNote.note_id.in_(note_ids))
-            .filter(ProcessedGranolaNote.account_id == self.account_id)
-            .all()
-        )
+        # P1 Fix #003: Use context manager for proper session lifecycle
+        with get_db_session() as db:
+            # Query processed notes
+            processed = set(
+                row[0]
+                for row in db.query(ProcessedGranolaNote.note_id)
+                .filter(ProcessedGranolaNote.note_id.in_(note_ids))
+                .filter(ProcessedGranolaNote.account_id == self.account_id)
+                .all()
+            )
 
         # Return only new notes
         new_notes = [note for note in notes if note["id"] not in processed]
@@ -293,19 +385,62 @@ class GranolaIntegration(BaseIntegration):
         note_created_at: datetime,
         tasks_created: int,
     ) -> None:
-        """Mark a note as processed in the database."""
-        processed_note = ProcessedGranolaNote(
-            note_id=note_id,
-            workspace_id=self.workspace_id,
-            account_id=self.account_id,
-            note_title=note_title,
-            note_created_at=note_created_at,
-            tasks_created_count=tasks_created,
-        )
+        """Mark a note as processed in the database.
 
-        self.db.add(processed_note)
-        self.db.commit()
+        P1 Fixes #003, #004, #005: Uses per-operation session with proper
+        transaction handling and race condition prevention.
 
-        logger.debug(
-            f"Marked Granola note '{note_title}' as processed ({tasks_created} tasks created)"
-        )
+        Args:
+            note_id: Unique identifier for the note
+            note_title: Title of the note
+            note_created_at: When the note was created
+            tasks_created: Number of tasks created from this note
+        """
+        from src.models.database import get_db_session
+
+        # P1 Fix #003: Use context manager for proper session lifecycle
+        with get_db_session() as db:
+            # P1 Fix #004: Check if already processed (prevents race condition)
+            existing = db.query(ProcessedGranolaNote).filter(
+                ProcessedGranolaNote.note_id == note_id,
+                ProcessedGranolaNote.account_id == self.account_id
+            ).first()
+
+            if existing:
+                logger.debug(
+                    f"Note '{note_id}' already marked as processed "
+                    f"(original processing: {existing.processed_at})"
+                )
+                return
+
+            # P1 Fix #005: Proper transaction handling with rollback
+            try:
+                processed_note = ProcessedGranolaNote(
+                    note_id=note_id,
+                    workspace_id=self.workspace_id,
+                    account_id=self.account_id,
+                    note_title=note_title,
+                    note_created_at=note_created_at,
+                    tasks_created_count=tasks_created,
+                )
+
+                db.add(processed_note)
+                db.commit()
+
+                logger.debug(
+                    f"Marked Granola note '{note_title}' as processed "
+                    f"({tasks_created} tasks created)"
+                )
+
+            except IntegrityError:
+                # Race condition: another agent inserted between our check and insert
+                db.rollback()
+                logger.debug(
+                    f"Note '{note_id}' was marked processed by another agent "
+                    "during insertion (race condition handled)"
+                )
+
+            except Exception:
+                # Unexpected database error - rollback and re-raise
+                db.rollback()
+                raise

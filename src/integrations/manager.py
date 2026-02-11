@@ -9,7 +9,6 @@ from src.integrations.base import ActionableItem, BaseIntegration, IntegrationTy
 from src.integrations.gmail_integration import GmailIntegration
 from src.integrations.granola_integration import GranolaIntegration
 from src.integrations.slack_integration import SlackIntegration
-from src.models import get_db
 from src.models.task import TaskPriority, TaskSource
 from src.services.task_service import TaskService
 
@@ -136,13 +135,11 @@ class IntegrationManager:
                 workspace_id = workspace_config.get("workspace_id", "default")
 
                 try:
-                    # Get database session for duplicate tracking
-                    db_session = next(get_db())
-
+                    # P1 Fix #003: Removed db_session parameter - integration now uses
+                    # per-operation sessions via context manager for proper lifecycle
                     integration = GranolaIntegration(
                         config=workspace_config,
                         account_id=workspace_id,
-                        db_session=db_session,
                     )
                     integration.set_http_log_callback(self._http_log_callback)
 

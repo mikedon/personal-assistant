@@ -13,12 +13,6 @@ from src.models import ProcessedGranolaNote
 
 
 @pytest.fixture
-def mock_db_session():
-    """Mock database session."""
-    return MagicMock()
-
-
-@pytest.fixture
 def granola_config():
     """Sample Granola workspace configuration."""
     return {
@@ -74,47 +68,43 @@ def sample_cache_data():
 class TestGranolaIntegration:
     """Test Granola integration functionality."""
 
-    def test_initialization(self, granola_config, mock_db_session):
+    def test_initialization(self, granola_config):
         """Test Granola integration initialization."""
         integration = GranolaIntegration(
             config=granola_config,
             account_id="all",
-            db_session=mock_db_session,
         )
 
         assert integration.workspace_id == "all"
         assert integration.lookback_days == 7
         assert integration.integration_type == IntegrationType.GRANOLA
 
-    def test_get_cache_path_macos(self, granola_config, mock_db_session):
+    def test_get_cache_path_macos(self, granola_config):
         """Test cache path detection on macOS."""
         with patch("sys.platform", "darwin"):
             integration = GranolaIntegration(
                 config=granola_config,
                 account_id="all",
-                db_session=mock_db_session,
-            )
+                )
 
             expected_path = Path.home() / "Library/Application Support/Granola/cache-v3.json"
             assert integration.cache_path == expected_path
 
-    def test_get_cache_path_unsupported_platform(self, granola_config, mock_db_session):
+    def test_get_cache_path_unsupported_platform(self, granola_config):
         """Test cache path raises error on unsupported platform."""
         with patch("sys.platform", "freebsd"):
             with pytest.raises(ValueError, match="Unsupported platform"):
                 GranolaIntegration(
                     config=granola_config,
                     account_id="all",
-                    db_session=mock_db_session,
-                )
+                        )
 
     @pytest.mark.asyncio
-    async def test_authenticate_success(self, granola_config, mock_db_session, sample_cache_data):
+    async def test_authenticate_success(self, granola_config, sample_cache_data):
         """Test successful authentication."""
         integration = GranolaIntegration(
             config=granola_config,
             account_id="all",
-            db_session=mock_db_session,
         )
 
         cache_content = json.dumps(sample_cache_data)
@@ -125,12 +115,11 @@ class TestGranolaIntegration:
                 assert result is True
 
     @pytest.mark.asyncio
-    async def test_authenticate_missing_file(self, granola_config, mock_db_session):
+    async def test_authenticate_missing_file(self, granola_config):
         """Test authentication fails when cache file missing."""
         integration = GranolaIntegration(
             config=granola_config,
             account_id="all",
-            db_session=mock_db_session,
         )
 
         with patch.object(Path, "exists", return_value=False):
@@ -140,12 +129,11 @@ class TestGranolaIntegration:
                 await integration.authenticate()
 
     @pytest.mark.asyncio
-    async def test_authenticate_invalid_json(self, granola_config, mock_db_session):
+    async def test_authenticate_invalid_json(self, granola_config):
         """Test authentication fails with invalid JSON."""
         integration = GranolaIntegration(
             config=granola_config,
             account_id="all",
-            db_session=mock_db_session,
         )
 
         with patch.object(Path, "exists", return_value=True):
@@ -155,12 +143,11 @@ class TestGranolaIntegration:
                 with pytest.raises(AuthenticationError, match="Failed to read Granola cache"):
                     await integration.authenticate()
 
-    def test_prosemirror_to_text_simple(self, granola_config, mock_db_session):
+    def test_prosemirror_to_text_simple(self, granola_config):
         """Test ProseMirror JSON to text conversion with simple content."""
         integration = GranolaIntegration(
             config=granola_config,
             account_id="all",
-            db_session=mock_db_session,
         )
 
         panel_data = {
@@ -175,12 +162,11 @@ class TestGranolaIntegration:
         result = integration._prosemirror_to_text(panel_data)
         assert "This is a test" in result
 
-    def test_prosemirror_to_text_with_heading(self, granola_config, mock_db_session):
+    def test_prosemirror_to_text_with_heading(self, granola_config):
         """Test ProseMirror conversion with headings."""
         integration = GranolaIntegration(
             config=granola_config,
             account_id="all",
-            db_session=mock_db_session,
         )
 
         panel_data = {
@@ -196,12 +182,11 @@ class TestGranolaIntegration:
         result = integration._prosemirror_to_text(panel_data)
         assert "## Important Section" in result
 
-    def test_prosemirror_to_text_with_list(self, granola_config, mock_db_session):
+    def test_prosemirror_to_text_with_list(self, granola_config):
         """Test ProseMirror conversion with bullet lists."""
         integration = GranolaIntegration(
             config=granola_config,
             account_id="all",
-            db_session=mock_db_session,
         )
 
         panel_data = {
@@ -226,24 +211,23 @@ class TestGranolaIntegration:
         result = integration._prosemirror_to_text(panel_data)
         assert "• First item" in result
 
-    def test_prosemirror_to_text_empty(self, granola_config, mock_db_session):
+    def test_prosemirror_to_text_empty(self, granola_config):
         """Test ProseMirror conversion with empty content."""
         integration = GranolaIntegration(
             config=granola_config,
             account_id="all",
-            db_session=mock_db_session,
         )
 
         assert integration._prosemirror_to_text({}) == ""
         assert integration._prosemirror_to_text(None) == ""
         assert integration._prosemirror_to_text({"content": []}) == ""
 
-    def test_filter_new_notes(self, granola_config, mock_db_session):
+    @patch("src.models.database.get_db_session")
+    def test_filter_new_notes(self, mock_get_db_session, granola_config):
         """Test filtering of already-processed notes."""
         integration = GranolaIntegration(
             config=granola_config,
             account_id="all",
-            db_session=mock_db_session,
         )
 
         notes = [
@@ -252,11 +236,15 @@ class TestGranolaIntegration:
             {"id": "note3", "title": "Meeting 3"},
         ]
 
-        # Mock database query to return note2 as already processed
+        # Mock database session and query to return note2 as already processed
+        mock_db = MagicMock()
         mock_query = MagicMock()
         mock_query.filter.return_value = mock_query
         mock_query.all.return_value = [("note2",)]
-        mock_db_session.query.return_value = mock_query
+        mock_db.query.return_value = mock_query
+        mock_db.__enter__ = MagicMock(return_value=mock_db)
+        mock_db.__exit__ = MagicMock(return_value=False)
+        mock_get_db_session.return_value = mock_db
 
         new_notes = integration._filter_new_notes(notes)
 
@@ -264,12 +252,11 @@ class TestGranolaIntegration:
         assert new_notes[0]["id"] == "note1"
         assert new_notes[1]["id"] == "note3"
 
-    def test_extract_actionable_item(self, granola_config, mock_db_session):
+    def test_extract_actionable_item(self, granola_config):
         """Test extraction of actionable item from note."""
         integration = GranolaIntegration(
             config=granola_config,
             account_id="all",
-            db_session=mock_db_session,
         )
 
         note = {
@@ -305,12 +292,11 @@ class TestGranolaIntegration:
         assert "meeting-notes" in item.tags
         assert "granola" in item.tags
 
-    def test_extract_actionable_item_with_object_people(self, granola_config, mock_db_session):
+    def test_extract_actionable_item_with_object_people(self, granola_config):
         """Test extraction handles people as objects (not just strings)."""
         integration = GranolaIntegration(
             config=granola_config,
             account_id="all",
-            db_session=mock_db_session,
         )
 
         note = {
@@ -332,13 +318,20 @@ class TestGranolaIntegration:
         assert item is not None
         assert "Alice, Bob" in item.description
 
-    def test_mark_note_processed(self, granola_config, mock_db_session):
+    @patch("src.models.database.get_db_session")
+    def test_mark_note_processed(self, mock_get_db_session, granola_config):
         """Test marking a note as processed."""
         integration = GranolaIntegration(
             config=granola_config,
             account_id="engineering",
-            db_session=mock_db_session,
         )
+
+        # Mock database session
+        mock_db = MagicMock()
+        mock_db.query.return_value.filter.return_value.first.return_value = None  # No existing record
+        mock_db.__enter__ = MagicMock(return_value=mock_db)
+        mock_db.__exit__ = MagicMock(return_value=False)
+        mock_get_db_session.return_value = mock_db
 
         note_created_at = datetime.now(UTC) - timedelta(days=1)
 
@@ -350,11 +343,11 @@ class TestGranolaIntegration:
         )
 
         # Verify database session was used correctly
-        mock_db_session.add.assert_called_once()
-        mock_db_session.commit.assert_called_once()
+        mock_db.add.assert_called_once()
+        mock_db.commit.assert_called_once()
 
         # Verify the created object
-        added_note = mock_db_session.add.call_args[0][0]
+        added_note = mock_db.add.call_args[0][0]
         assert isinstance(added_note, ProcessedGranolaNote)
         assert added_note.note_id == "note789"
         assert added_note.note_title == "Sprint Planning"
