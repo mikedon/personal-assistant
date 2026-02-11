@@ -38,6 +38,7 @@ class TaskSource(str, enum.Enum):
     MEETING_NOTES = "meeting_notes"
     AGENT = "agent"
     VOICE = "voice"
+    GRANOLA = "granola"
 
 
 class Task(Base):

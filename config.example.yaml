@@ -79,6 +79,24 @@ slack:
     - "general"
     - "important-updates"
 
+granola:
+  # Granola meeting notes integration (reads from local cache)
+  enabled: true
+  workspaces:
+    # Scan all workspaces
+    - workspace_id: "all"
+      display_name: "All Workspaces"
+      enabled: true
+      lookback_days: 7  # How many days back to scan for new notes
+      polling_interval_minutes: 15  # How often to check for new notes
+
+    # Example: Specific workspace
+    # - workspace_id: "engineering"
+    #   display_name: "Engineering Team"
+    #   enabled: true
+    #   lookback_days: 3
+    #   polling_interval_minutes: 10
+
 voice:
   # Voice input settings
   enabled: true
