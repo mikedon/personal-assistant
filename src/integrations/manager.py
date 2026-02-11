@@ -7,7 +7,9 @@ from typing import Any, Callable
 
 from src.integrations.base import ActionableItem, BaseIntegration, IntegrationType
 from src.integrations.gmail_integration import GmailIntegration
+from src.integrations.granola_integration import GranolaIntegration
 from src.integrations.slack_integration import SlackIntegration
+from src.models import get_db
 from src.models.task import TaskPriority, TaskSource
 from src.services.task_service import TaskService
 
@@ -117,6 +119,49 @@ class IntegrationManager:
                 logger.info("Slack integration initialized")
             except Exception as e:
                 logger.error(f"Failed to initialize Slack integration: {e}")
+
+        # Granola - support multiple workspaces
+        granola_config = self.config.get("granola", {})
+        if granola_config.get("enabled", False):
+            workspaces = granola_config.get("workspaces", [])
+
+            if not workspaces:
+                logger.warning("Granola enabled but no workspaces configured")
+
+            for workspace_config in workspaces:
+                if not workspace_config.get("enabled", True):
+                    logger.info(f"Skipping disabled Granola workspace: {workspace_config.get('workspace_id')}")
+                    continue
+
+                workspace_id = workspace_config.get("workspace_id", "default")
+
+                try:
+                    # Get database session for duplicate tracking
+                    db_session = next(get_db())
+
+                    integration = GranolaIntegration(
+                        config=workspace_config,
+                        account_id=workspace_id,
+                        db_session=db_session,
+                    )
+                    integration.set_http_log_callback(self._http_log_callback)
+
+                    # Store with IntegrationKey
+                    key = IntegrationKey(IntegrationType.GRANOLA, workspace_id)
+
+                    # Check for duplicate workspace_id
+                    if key in self.integrations:
+                        logger.error(
+                            f"Duplicate workspace_id '{workspace_id}' for {IntegrationType.GRANOLA.value}. "
+                            f"Skipping duplicate configuration."
+                        )
+                        continue
+
+                    self.integrations[key] = integration
+                    logger.info(f"Granola integration initialized for workspace: {workspace_id}")
+
+                except Exception as e:
+                    logger.error(f"Failed to initialize Granola workspace '{workspace_id}': {e}")
 
     async def poll_all(self) -> list[ActionableItem]:
         """Poll all enabled integrations for actionable items.
@@ -282,6 +327,7 @@ class IntegrationManager:
             IntegrationType.SLACK: TaskSource.SLACK,
             IntegrationType.CALENDAR: TaskSource.CALENDAR,
             IntegrationType.DRIVE: TaskSource.MEETING_NOTES,  # Approximate
+            IntegrationType.GRANOLA: TaskSource.GRANOLA,
         }
 
         # Map priority string to TaskPriority
