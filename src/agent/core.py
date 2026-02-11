@@ -667,6 +667,7 @@ class AutonomousAgent:
                     source_reference=original_item.source_reference,
                     due_date=extracted.due_date,
                     tags=extracted.tags or [],
+                    document_links=extracted.document_links or [],
                 )
 
                 # Log task creation

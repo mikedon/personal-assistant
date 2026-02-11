@@ -49,7 +49,7 @@ def test_task_tags_empty(test_db_session):
 
 
 def test_task_document_links(test_db_session):
-    """Test task document links functionality."""
+    """Test task document links functionality (JSON format)."""
     task = Task(title="Test Task")
     links = ["https://docs.google.com/doc1", "https://example.com/doc2"]
     task.set_document_links_list(links)
@@ -57,7 +57,9 @@ def test_task_document_links(test_db_session):
     test_db_session.add(task)
     test_db_session.commit()
 
-    assert task.document_links == "https://docs.google.com/doc1,https://example.com/doc2"
+    # Now stored as JSON array
+    import json
+    assert json.loads(task.document_links) == links
     assert task.get_document_links_list() == links
 
 
@@ -72,7 +74,7 @@ def test_task_document_links_empty(test_db_session):
 
 
 def test_task_document_links_single(test_db_session):
-    """Test task with single document link."""
+    """Test task with single document link (JSON format)."""
     task = Task(title="Test Task")
     link = "https://docs.google.com/document/d/123"
     task.set_document_links_list([link])
@@ -80,8 +82,68 @@ def test_task_document_links_single(test_db_session):
     test_db_session.add(task)
     test_db_session.commit()
 
-    assert task.document_links == link
+    # Stored as JSON array even for single link
+    import json
+    assert json.loads(task.document_links) == [link]
     assert task.get_document_links_list() == [link]
+
+
+def test_task_document_links_with_commas(test_db_session):
+    """Test URLs containing commas are handled correctly (CSV injection prevention)."""
+    task = Task(title="Test Task")
+    # URL with commas in query parameters
+    url_with_commas = "https://example.com/doc?tags=work,urgent&id=123"
+    task.set_document_links_list([url_with_commas])
+
+    test_db_session.add(task)
+    test_db_session.commit()
+    test_db_session.refresh(task)
+
+    # Should retrieve URL intact, not split by commas
+    retrieved = task.get_document_links_list()
+    assert len(retrieved) == 1, f"Expected 1 URL, got {len(retrieved)}"
+    assert retrieved[0] == url_with_commas, "URL was corrupted"
+
+
+def test_task_document_links_csv_formula_injection_prevention(test_db_session):
+    """Test that CSV formula injection attacks are neutralized."""
+    task = Task(title="Test Task")
+    # Malicious formula injection attempts
+    malicious_urls = [
+        "=cmd|'/c calc'!A1",
+        "@SUM(A1:A10)",
+        "+2+5+cmd|'/c calc'!A0"
+    ]
+
+    # These should be stored safely as JSON strings
+    task.set_document_links_list(malicious_urls)
+
+    test_db_session.add(task)
+    test_db_session.commit()
+    test_db_session.refresh(task)
+
+    # Should retrieve exactly what was stored, no execution risk
+    retrieved = task.get_document_links_list()
+    assert len(retrieved) == 3
+    assert retrieved == malicious_urls
+
+
+def test_task_document_links_csv_backward_compatibility(test_db_session):
+    """Test backward compatibility with legacy CSV format."""
+    task = Task(title="Test Task")
+
+    # Simulate legacy CSV storage (directly set the field)
+    task.document_links = "https://docs.google.com/doc1,https://example.com/doc2"
+
+    test_db_session.add(task)
+    test_db_session.commit()
+    test_db_session.refresh(task)
+
+    # Should still parse CSV format correctly
+    retrieved = task.get_document_links_list()
+    assert len(retrieved) == 2
+    assert "docs.google.com/doc1" in retrieved[0]
+    assert "example.com/doc2" in retrieved[1]
 
 
 def test_task_repr():

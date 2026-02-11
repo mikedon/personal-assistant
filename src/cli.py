@@ -726,6 +726,24 @@ def tasks_delete(task_id, yes):
 @click.argument("url")
 def tasks_link_add(task_id, url):
     """Add a document link to a task."""
+    # Validate URL format
+    import urllib.parse
+
+    try:
+        parsed = urllib.parse.urlparse(url)
+        if not all([parsed.scheme, parsed.netloc]):
+            console.print(f"[red]Invalid URL format: {url}[/red]")
+            console.print("[yellow]URL must include scheme and domain (e.g., https://example.com)[/yellow]")
+            return
+
+        if parsed.scheme not in ['http', 'https']:
+            console.print(f"[red]Only http:// and https:// URLs are allowed[/red]")
+            console.print(f"[yellow]Got: {parsed.scheme}://[/yellow]")
+            return
+    except Exception as e:
+        console.print(f"[red]Invalid URL: {e}[/red]")
+        return
+
     with get_db_session() as db:
         service = TaskService(db)
         task = service.get_task(task_id)

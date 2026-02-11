@@ -453,3 +453,308 @@ def test_mixed_tasks_with_and_without_initiatives(client, test_db_session, sampl
     assert len(tasks_with_initiative) >= 1
     assert len(tasks_without_initiative) >= 2
     assert tasks_with_initiative[0]["initiative_title"] == "Main Project"
+
+
+# ============================================================================
+# Document Links API Tests
+# ============================================================================
+
+
+def test_create_task_with_document_links(client, sample_task_data):
+    """Test creating task with document links via API."""
+    task_data = {
+        **sample_task_data,
+        "document_links": [
+            "https://docs.google.com/document/d/abc123",
+            "https://notion.so/My-Project-xyz"
+        ]
+    }
+    response = client.post("/api/tasks", json=task_data)
+
+    assert response.status_code == 201
+    data = response.json()
+    assert len(data["document_links"]) == 2
+    assert "docs.google.com" in data["document_links"][0]
+    assert "notion.so" in data["document_links"][1]
+    assert data["id"] is not None
+
+
+def test_create_task_with_empty_document_links(client, sample_task_data):
+    """Test creating task with empty document_links list."""
+    task_data = {**sample_task_data, "document_links": []}
+    response = client.post("/api/tasks", json=task_data)
+
+    assert response.status_code == 201
+    assert response.json()["document_links"] == []
+
+
+def test_create_task_without_document_links_field(client, sample_task_data):
+    """Test creating task without document_links field (uses default empty list)."""
+    response = client.post("/api/tasks", json=sample_task_data)
+
+    assert response.status_code == 201
+    data = response.json()
+    assert "document_links" in data
+    assert data["document_links"] == []
+
+
+def test_filter_tasks_by_document_link(client, sample_task_data):
+    """Test filtering tasks by document link via API."""
+    # Create tasks with different links
+    client.post("/api/tasks", json={
+        **sample_task_data,
+        "title": "Task 1",
+        "document_links": ["https://docs.google.com/document/d/doc1"]
+    })
+    client.post("/api/tasks", json={
+        **sample_task_data,
+        "title": "Task 2",
+        "document_links": ["https://notion.so/page1"]
+    })
+    client.post("/api/tasks", json={
+        **sample_task_data,
+        "title": "Task 3",
+        "document_links": []
+    })
+
+    # Filter by Google Docs
+    response = client.get("/api/tasks", params={"document_links": ["docs.google.com"]})
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["total"] == 1
+    assert data["tasks"][0]["title"] == "Task 1"
+
+
+def test_filter_tasks_by_multiple_document_links(client, sample_task_data):
+    """Test filtering by multiple links (OR logic)."""
+    # Create tasks
+    client.post("/api/tasks", json={
+        **sample_task_data,
+        "title": "Task 1",
+        "document_links": ["https://docs.google.com/document/d/doc1"]
+    })
+    client.post("/api/tasks", json={
+        **sample_task_data,
+        "title": "Task 2",
+        "document_links": ["https://notion.so/page1"]
+    })
+    client.post("/api/tasks", json={
+        **sample_task_data,
+        "title": "Task 3",
+        "document_links": ["https://github.com/org/repo/pull/123"]
+    })
+
+    # Filter by both Google Docs and Notion (should return both tasks)
+    response = client.get("/api/tasks", params={
+        "document_links": ["docs.google.com", "notion.so"]
+    })
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["total"] == 2
+    titles = {task["title"] for task in data["tasks"]}
+    assert titles == {"Task 1", "Task 2"}
+
+
+def test_update_task_document_links(client, sample_task_data):
+    """Test updating document links via API."""
+    # Create task without links
+    response = client.post("/api/tasks", json=sample_task_data)
+    task_id = response.json()["id"]
+
+    # Update with document links
+    response = client.put(f"/api/tasks/{task_id}", json={
+        "document_links": ["https://new-link.com/doc123"]
+    })
+
+    assert response.status_code == 200
+    data = response.json()
+    assert len(data["document_links"]) == 1
+    assert "new-link.com" in data["document_links"][0]
+
+
+def test_update_task_add_document_links(client, sample_task_data):
+    """Test adding links to existing task."""
+    # Create task with one link
+    response = client.post("/api/tasks", json={
+        **sample_task_data,
+        "document_links": ["https://docs.google.com/doc1"]
+    })
+    task_id = response.json()["id"]
+
+    # Add more links
+    response = client.put(f"/api/tasks/{task_id}", json={
+        "document_links": [
+            "https://docs.google.com/doc1",
+            "https://notion.so/page1",
+            "https://github.com/org/repo"
+        ]
+    })
+
+    assert response.status_code == 200
+    data = response.json()
+    assert len(data["document_links"]) == 3
+
+
+def test_update_task_clear_document_links(client, sample_task_data):
+    """Test clearing document links by setting to empty list."""
+    # Create task with links
+    response = client.post("/api/tasks", json={
+        **sample_task_data,
+        "document_links": ["https://docs.google.com/doc1"]
+    })
+    task_id = response.json()["id"]
+
+    # Clear links
+    response = client.put(f"/api/tasks/{task_id}", json={
+        "document_links": []
+    })
+
+    assert response.status_code == 200
+    assert response.json()["document_links"] == []
+
+
+def test_create_task_with_invalid_url(client, sample_task_data):
+    """Test API rejects invalid URLs."""
+    task_data = {
+        **sample_task_data,
+        "document_links": ["not-a-url"]
+    }
+    response = client.post("/api/tasks", json=task_data)
+
+    # Should return 422 validation error
+    assert response.status_code == 422
+    errors = response.json()["detail"]
+    assert any("url" in str(error).lower() for error in errors)
+
+
+def test_create_task_with_javascript_url(client, sample_task_data):
+    """Test API rejects javascript: URLs."""
+    task_data = {
+        **sample_task_data,
+        "document_links": ["javascript:alert(1)"]
+    }
+    response = client.post("/api/tasks", json=task_data)
+
+    # Should return 422 validation error
+    assert response.status_code == 422
+
+
+def test_create_task_with_file_url(client, sample_task_data):
+    """Test API rejects file:// URLs."""
+    task_data = {
+        **sample_task_data,
+        "document_links": ["file:///etc/passwd"]
+    }
+    response = client.post("/api/tasks", json=task_data)
+
+    # Should return 422 validation error
+    assert response.status_code == 422
+
+
+def test_create_task_with_too_many_links(client, sample_task_data):
+    """Test API rejects more than 20 links."""
+    task_data = {
+        **sample_task_data,
+        "document_links": [f"https://example.com/doc{i}" for i in range(25)]
+    }
+    response = client.post("/api/tasks", json=task_data)
+
+    # Should return 422 validation error
+    assert response.status_code == 422
+    assert "20" in str(response.json()["detail"])
+
+
+def test_list_tasks_includes_document_links(client, sample_task_data):
+    """Test that list endpoint returns document_links field."""
+    client.post("/api/tasks", json={
+        **sample_task_data,
+        "document_links": ["https://docs.google.com/doc1"]
+    })
+
+    response = client.get("/api/tasks")
+
+    assert response.status_code == 200
+    data = response.json()
+    assert len(data["tasks"]) >= 1
+    assert "document_links" in data["tasks"][0]
+    assert isinstance(data["tasks"][0]["document_links"], list)
+
+
+def test_get_task_by_id_includes_document_links(client, sample_task_data):
+    """Test that get-by-id endpoint returns document_links."""
+    response = client.post("/api/tasks", json={
+        **sample_task_data,
+        "document_links": ["https://docs.google.com/doc1"]
+    })
+    task_id = response.json()["id"]
+
+    response = client.get(f"/api/tasks/{task_id}")
+
+    assert response.status_code == 200
+    data = response.json()
+    assert "document_links" in data
+    assert len(data["document_links"]) == 1
+    assert "docs.google.com" in data["document_links"][0]
+
+
+def test_document_links_with_commas_in_url(client, sample_task_data):
+    """Test that URLs with commas in query params are handled correctly."""
+    url_with_commas = "https://example.com/doc?tags=work,urgent&id=123"
+    task_data = {
+        **sample_task_data,
+        "document_links": [url_with_commas]
+    }
+    response = client.post("/api/tasks", json=task_data)
+
+    assert response.status_code == 201
+    data = response.json()
+    assert len(data["document_links"]) == 1
+    # URL should be intact, not split by commas
+    assert data["document_links"][0] == url_with_commas
+
+
+def test_document_links_with_special_characters(client, sample_task_data):
+    """Test URLs with special characters are handled."""
+    urls = [
+        "https://example.com/doc?param=value&other=test",
+        "https://example.com/doc#section",
+        "https://example.com/doc?query=hello%20world"
+    ]
+    task_data = {
+        **sample_task_data,
+        "document_links": urls
+    }
+    response = client.post("/api/tasks", json=task_data)
+
+    assert response.status_code == 201
+    data = response.json()
+    assert len(data["document_links"]) == 3
+    for i, url in enumerate(urls):
+        assert data["document_links"][i] == url
+
+
+def test_pagination_with_document_links(client, sample_task_data):
+    """Test pagination works correctly with document_links."""
+    # Create 15 tasks with links
+    for i in range(15):
+        client.post("/api/tasks", json={
+            **sample_task_data,
+            "title": f"Task {i}",
+            "document_links": [f"https://example.com/doc{i}"]
+        })
+
+    # Get first page
+    response = client.get("/api/tasks?limit=10&offset=0")
+    assert response.status_code == 200
+    data = response.json()
+    assert len(data["tasks"]) == 10
+    assert all("document_links" in task for task in data["tasks"])
+
+    # Get second page
+    response = client.get("/api/tasks?limit=10&offset=10")
+    assert response.status_code == 200
+    data = response.json()
+    assert len(data["tasks"]) >= 5
+    assert all("document_links" in task for task in data["tasks"])

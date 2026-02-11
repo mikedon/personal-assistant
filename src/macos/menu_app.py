@@ -348,9 +348,9 @@ class TaskMenuApp(NSObject):
         Args:
             sender: Menu item (unused)
         """
-        import subprocess
+        import webbrowser
 
-        subprocess.Popen(["open", f"{self.api_url}/docs"])
+        webbrowser.open(f"{self.api_url}/docs")
 
     def task_item_clicked(self, sender: Any = None) -> None:
         """Handle task menu item click.

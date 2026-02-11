@@ -83,8 +83,8 @@ class Task(Base):
     # Tags for categorization (stored as comma-separated string)
     tags: Mapped[str | None] = mapped_column(String(500), nullable=True)
 
-    # Document links (stored as comma-separated URLs)
-    document_links: Mapped[str | None] = mapped_column(String(1000), nullable=True)
+    # Document links (stored as JSON array of URLs)
+    document_links: Mapped[str | None] = mapped_column(String(5000), nullable=True)
 
     # Initiative relationship (optional - task can belong to an initiative)
     initiative_id: Mapped[int | None] = mapped_column(
@@ -108,11 +108,32 @@ class Task(Base):
         self.tags = ",".join(tags) if tags else None
 
     def get_document_links_list(self) -> list[str]:
-        """Get document links as a list."""
+        """Get document links as a list.
+
+        Supports both JSON format (new) and CSV format (legacy) for backward compatibility.
+        """
         if not self.document_links:
             return []
+
+        # Try JSON format first (new storage method)
+        try:
+            import json
+            links = json.loads(self.document_links)
+            if isinstance(links, list):
+                return links
+        except (json.JSONDecodeError, ValueError):
+            pass
+
+        # Fallback to CSV format (legacy)
         return [link.strip() for link in self.document_links.split(",") if link.strip()]
 
-    def set_document_links_list(self, links: list[str]) -> None:
-        """Set document links from a list."""
-        self.document_links = ",".join(links) if links else None
+    def set_document_links_list(self, links: list[str] | None) -> None:
+        """Set document links from a list.
+
+        Stores as JSON array to prevent CSV injection and handle URLs with special characters.
+        """
+        if not links:
+            self.document_links = None
+        else:
+            import json
+            self.document_links = json.dumps(links)

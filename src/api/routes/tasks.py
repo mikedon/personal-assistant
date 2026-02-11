@@ -122,6 +122,11 @@ def create_task(
     service: Annotated[TaskService, Depends(get_task_service)],
 ) -> TaskResponse:
     """Create a new task."""
+    # Convert HttpUrl objects to strings
+    document_links = None
+    if task_data.document_links:
+        document_links = [str(url) for url in task_data.document_links]
+
     task = service.create_task(
         title=task_data.title,
         description=task_data.description,
@@ -130,7 +135,7 @@ def create_task(
         source_reference=task_data.source_reference,
         due_date=task_data.due_date,
         tags=task_data.tags,
-        document_links=task_data.document_links if task_data.document_links else None,
+        document_links=document_links,
         initiative_id=task_data.initiative_id,
     )
     return _task_to_response(task)
@@ -147,6 +152,11 @@ def update_task(
     if not task:
         raise HTTPException(status_code=404, detail="Task not found")
 
+    # Convert HttpUrl objects to strings
+    document_links = task_data.document_links
+    if document_links is not None:
+        document_links = [str(url) for url in document_links]
+
     task = service.update_task(
         task,
         title=task_data.title,
@@ -155,7 +165,7 @@ def update_task(
         priority=task_data.priority,
         due_date=task_data.due_date,
         tags=task_data.tags,
-        document_links=task_data.document_links,
+        document_links=document_links,
         initiative_id=task_data.initiative_id,
         clear_initiative=task_data.clear_initiative,
     )
