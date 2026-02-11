@@ -1,6 +1,6 @@
 """ProcessedGranolaNote model for tracking processed Granola notes."""
 
-from datetime import UTC, datetime
+from datetime import datetime
 
 from sqlalchemy import DateTime, Integer, String, UniqueConstraint, func
 from sqlalchemy.orm import Mapped, mapped_column

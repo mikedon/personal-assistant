@@ -17,7 +17,7 @@ from src.integrations.base import (
     BaseIntegration,
     IntegrationType,
 )
-from src.models import ProcessedGranolaNote, TaskSource
+from src.models import ProcessedGranolaNote
 
 logger = logging.getLogger(__name__)
 
@@ -79,7 +79,7 @@ class GranolaIntegration(BaseIntegration):
             )
 
         try:
-            with open(self.cache_path, "r") as f:
+            with open(self.cache_path) as f:
                 data = json.load(f)
 
             # Verify cache structure
@@ -122,7 +122,7 @@ class GranolaIntegration(BaseIntegration):
 
     def _read_cache(self) -> list[dict]:
         """Read and parse Granola cache file."""
-        with open(self.cache_path, "r") as f:
+        with open(self.cache_path) as f:
             data = json.load(f)
 
         # Parse nested cache structure
@@ -183,7 +183,7 @@ class GranolaIntegration(BaseIntegration):
         new_notes = [note for note in notes if note["id"] not in processed]
 
         logger.debug(
-            f"Filtered {len(notes)} notes: {len(new_notes)} new, " f"{len(processed)} already processed"
+            f"Filtered {len(notes)} notes: {len(new_notes)} new, {len(processed)} already processed"
         )
 
         return new_notes
@@ -307,5 +307,5 @@ class GranolaIntegration(BaseIntegration):
         self.db.commit()
 
         logger.debug(
-            f"Marked Granola note '{note_title}' as processed " f"({tasks_created} tasks created)"
+            f"Marked Granola note '{note_title}' as processed ({tasks_created} tasks created)"
         )
