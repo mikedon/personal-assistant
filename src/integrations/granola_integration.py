@@ -1,14 +1,11 @@
-"""Granola meeting notes integration via local cache access."""
+"""Granola meeting notes integration via official MCP server."""
 
-import json
 import logging
-import os
-import stat
-import sys
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
+import httpx
 from sqlalchemy.exc import IntegrityError
 
 from src.integrations.base import (
@@ -19,30 +16,32 @@ from src.integrations.base import (
     IntegrationType,
     PollError,
 )
+from src.integrations.granola_oauth import GranolaOAuthManager
+from src.integrations.mcp_client import MCPClient
 from src.models import ProcessedGranolaNote
 
 logger = logging.getLogger(__name__)
 
 
 class GranolaIntegration(BaseIntegration):
-    """Integration for Granola meeting notes using local cache.
+    """Integration for Granola meeting notes using official MCP server.
+
+    Uses Granola's Model Context Protocol (MCP) server at https://mcp.granola.ai/mcp
+    for OAuth-based authentication and HTTP API access to meeting notes.
 
     Note: workspace_id is used as account_id for multi-account consistency.
     This allows multiple Granola workspaces to be treated as separate accounts
     in the integration manager.
     """
 
-    CACHE_PATHS = {
-        "darwin": Path.home() / "Library/Application Support/Granola/cache-v3.json",
-        "linux": Path.home() / ".config/Granola/cache-v3.json",
-    }
+    MCP_SERVER_URL = "https://mcp.granola.ai/mcp"
 
     def __init__(
         self,
         config: dict[str, Any],
         account_id: str,
     ):
-        """Initialize Granola integration.
+        """Initialize Granola MCP integration.
 
         Args:
             config: Workspace configuration dict
@@ -51,196 +50,171 @@ class GranolaIntegration(BaseIntegration):
         super().__init__(config, account_id)
         self.workspace_id = config.get("workspace_id", "default")
         self.lookback_days = config.get("lookback_days", 7)
-        self.cache_path = self._get_cache_path()
+
+        # OAuth setup
+        token_path = self._get_token_path(config)
+        self.oauth_manager = GranolaOAuthManager(token_path)
+        self.mcp_client: MCPClient | None = None
 
     @property
     def integration_type(self) -> IntegrationType:
         """Return integration type."""
         return IntegrationType.GRANOLA
 
-    def _get_cache_path(self) -> Path:
-        """Get cache file path for current platform with validation.
+    def _get_token_path(self, config: dict[str, Any]) -> Path:
+        """Get OAuth token storage path.
+
+        Args:
+            config: Workspace configuration
 
         Returns:
-            Validated cache file path
-
-        Raises:
-            ValueError: If platform unsupported or APPDATA invalid on Windows
+            Path to token file
         """
-        platform = sys.platform
+        # Allow custom token path from config
+        if "token_path" in config and config["token_path"]:
+            return Path(config["token_path"])
 
-        # Handle Windows with APPDATA validation (P1 Fix #001)
-        if platform == "win32":
-            appdata = os.environ.get("APPDATA")
-            if not appdata:
-                raise ValueError(
-                    "APPDATA environment variable not set. "
-                    "This is required on Windows for Granola cache access."
-                )
-
-            appdata_path = Path(appdata)
-            if not appdata_path.is_absolute():
-                raise ValueError(
-                    f"APPDATA must be an absolute path, got: {appdata}. "
-                    "This could indicate a security issue."
-                )
-
-            # Normalize path to prevent traversal attacks
-            cache_path = appdata_path.resolve() / "Granola/cache-v3.json"
-            return cache_path
-
-        # Handle macOS and Linux
-        cache_path = self.CACHE_PATHS.get(platform)
-        if not cache_path:
-            raise ValueError(f"Unsupported platform: {platform}")
-
-        return cache_path
+        # Default: ~/.personal-assistant/token.granola.json
+        return Path.home() / ".personal-assistant" / "token.granola.json"
 
     async def authenticate(self) -> bool:
-        """Verify cache file exists and is readable with security checks.
+        """Authenticate via OAuth and initialize MCP client.
+
+        Runs browser-based OAuth flow if no valid token exists, then
+        initializes HTTP client for MCP API calls.
 
         Returns:
             True if authentication successful
 
         Raises:
-            AuthenticationError: If cache file missing, invalid, or insecure
+            AuthenticationError: If OAuth flow fails or MCP server unreachable
         """
-        if not self.cache_path.exists():
-            raise AuthenticationError(
-                f"Granola cache file not found at {self.cache_path}. "
-                "Ensure Granola desktop app is installed and has synced notes."
-            )
-
-        # P1 Fix #002: Security checks for symlinks and permissions
-        # Check if symlink (security risk)
-        if self.cache_path.is_symlink():
-            raise AuthenticationError(
-                f"Cache file {self.cache_path} is a symbolic link. "
-                "For security reasons, symlinks are not allowed."
-            )
-
-        # Check file permissions and ownership (Unix-like systems)
-        if hasattr(os, 'stat'):
-            try:
-                file_stat = self.cache_path.stat()
-
-                # Warn if world-readable (privacy concern)
-                if file_stat.st_mode & stat.S_IROTH:
-                    logger.warning(
-                        f"Cache file {self.cache_path} is world-readable. "
-                        "Consider setting permissions to 600 for privacy: "
-                        f"chmod 600 {self.cache_path}"
-                    )
-
-                # Verify ownership on Unix systems (not Windows)
-                if hasattr(file_stat, 'st_uid') and hasattr(os, 'getuid'):
-                    if file_stat.st_uid != os.getuid():
-                        raise AuthenticationError(
-                            f"Cache file {self.cache_path} does not belong to current user. "
-                            "This could indicate a security issue or misconfiguration."
-                        )
-            except OSError as e:
-                logger.warning(f"Could not check file permissions: {e}")
-
         try:
-            with open(self.cache_path) as f:
-                data = json.load(f)
+            # Get valid OAuth token (may trigger browser flow)
+            token = await self.oauth_manager.get_valid_token()
 
-            # Verify cache structure
-            if "cache" not in data:
-                raise AuthenticationError("Invalid cache file structure")
+            # Initialize MCP client
+            self.mcp_client = MCPClient(
+                server_url=self.MCP_SERVER_URL,
+                token=token,
+            )
 
-            logger.info(f"Successfully authenticated Granola cache at {self.cache_path}")
+            # Test connection with minimal API call
+            await self.mcp_client.list_meetings(limit=1)
+
+            logger.info(
+                f"Successfully authenticated with Granola MCP server "
+                f"(workspace: {self.workspace_id})"
+            )
             return True
 
-        except (json.JSONDecodeError, PermissionError) as e:
-            raise AuthenticationError(f"Failed to read Granola cache: {e}")
+        except RuntimeError as e:
+            raise AuthenticationError(f"Failed to authenticate with Granola: {e}") from e
+        except httpx.HTTPError as e:
+            raise AuthenticationError(
+                f"Failed to connect to Granola MCP server: {e}"
+            ) from e
+        except Exception as e:
+            logger.error(f"Unexpected authentication error: {e}", exc_info=True)
+            raise AuthenticationError(f"Authentication failed: {e}") from e
 
     async def poll(self) -> list[ActionableItem]:
-        """Poll for new meeting notes from local cache.
+        """Poll MCP server for new meeting notes.
+
+        Fetches meetings from MCP API, filters out already-processed notes,
+        and extracts actionable items for the agent.
 
         Returns:
-            List of actionable items from unprocessed notes
+            List of actionable items from unprocessed meetings
 
         Raises:
             PollError: If polling fails for any reason
         """
         try:
-            # Read cache file
-            notes = self._read_cache()
+            # Ensure authenticated
+            if not self.mcp_client:
+                await self.authenticate()
 
-            # Filter to new notes (not yet processed)
-            new_notes = self._filter_new_notes(notes)
+            # Calculate date filter
+            cutoff_date = datetime.now(UTC) - timedelta(days=self.lookback_days)
+
+            # Fetch meetings list from MCP
+            workspace_filter = None if self.workspace_id == "all" else self.workspace_id
+            all_meetings = await self.mcp_client.list_meetings(
+                limit=100,
+                workspace_id=workspace_filter,
+            )
+
+            logger.debug(f"Fetched {len(all_meetings)} meetings from MCP server")
+
+            # Filter by date
+            recent_meetings = [
+                m
+                for m in all_meetings
+                if self._parse_date(m.get("date", "")) > cutoff_date
+            ]
+
+            logger.debug(
+                f"Filtered to {len(recent_meetings)} meetings within lookback window "
+                f"({self.lookback_days} days)"
+            )
+
+            # Filter out already-processed notes
+            new_meetings = self._filter_new_notes(recent_meetings)
+
+            # Fetch full content for new meetings
+            if new_meetings:
+                meeting_ids = [m["id"] for m in new_meetings]
+                meetings_with_content = await self.mcp_client.get_meetings(
+                    meeting_ids=meeting_ids
+                )
+            else:
+                meetings_with_content = []
 
             # Extract actionable items
             items = []
-            for note in new_notes:
-                item = self._extract_actionable_item(note)
+            for meeting in meetings_with_content:
+                item = self._extract_actionable_item(meeting)
                 if item:
                     items.append(item)
 
             self._update_last_poll()
             logger.info(
-                f"Polled Granola workspace '{self.workspace_id}': "
-                f"{len(items)} actionable items from {len(new_notes)} new notes"
+                f"Polled Granola MCP workspace '{self.workspace_id}': "
+                f"{len(items)} actionable items from {len(new_meetings)} new meetings"
             )
 
             return items
 
-        except (FileNotFoundError, json.JSONDecodeError, PermissionError) as e:
-            # Expected errors - cache file issues
-            raise PollError(f"Failed to read Granola cache: {e}")
+        except httpx.HTTPError as e:
+            # Expected HTTP errors
+            logger.error(f"HTTP error polling Granola MCP: {e}")
+            raise PollError(f"Failed to poll Granola MCP server: {e}") from e
 
         except Exception as e:
             # Unexpected errors - programming bugs, database issues
-            logger.error(f"Unexpected error polling Granola: {e}", exc_info=True)
-            raise PollError(f"Unexpected error polling Granola: {e}")
+            logger.error(f"Unexpected error polling Granola MCP: {e}", exc_info=True)
+            raise PollError(f"Unexpected error polling Granola: {e}") from e
 
-    def _read_cache(self) -> list[dict]:
-        """Read and parse Granola cache file."""
-        with open(self.cache_path) as f:
-            data = json.load(f)
+    def _parse_date(self, date_str: str) -> datetime:
+        """Parse ISO date string to datetime.
 
-        # Parse nested cache structure
-        cache_data = json.loads(data["cache"])
-        state = cache_data.get("state", {})
+        Args:
+            date_str: ISO format date string
 
-        # Extract documents
-        documents = state.get("documents", {})
+        Returns:
+            Datetime object (UTC)
+        """
+        if not date_str:
+            return datetime.min.replace(tzinfo=UTC)
 
-        # Filter by workspace and date
-        cutoff_date = datetime.now(UTC) - timedelta(days=self.lookback_days)
-
-        notes = []
-        for doc_id, doc in documents.items():
-            # Parse created_at timestamp
-            created_at = datetime.fromisoformat(doc.get("created_at", "").replace("Z", "+00:00"))
-
-            # Filter by lookback window
-            if created_at < cutoff_date:
-                continue
-
-            # Filter by workspace if specified
-            workspace = doc.get("workspace_id", "default")
-            if self.workspace_id != "all" and workspace != self.workspace_id:
-                continue
-
-            notes.append(
-                {
-                    "id": doc_id,
-                    "title": doc.get("title", "Untitled Meeting"),
-                    "created_at": created_at,
-                    "updated_at": datetime.fromisoformat(
-                        doc.get("updated_at", doc.get("created_at", "")).replace("Z", "+00:00")
-                    ),
-                    "workspace_id": workspace,
-                    "panels": doc.get("panels", {}),
-                    "people": doc.get("people", []),
-                    "url": f"granola://note/{doc_id}",
-                }
-            )
-
-        return notes
+        try:
+            # Handle both Z and +00:00 timezone formats
+            normalized = date_str.replace("Z", "+00:00")
+            return datetime.fromisoformat(normalized)
+        except (ValueError, AttributeError):
+            logger.warning(f"Failed to parse date: {date_str}")
+            return datetime.min.replace(tzinfo=UTC)
 
     def _filter_new_notes(self, notes: list[dict]) -> list[dict]:
         """Filter out notes that have already been processed.
@@ -248,7 +222,7 @@ class GranolaIntegration(BaseIntegration):
         P1 Fix #003: Uses per-operation session instead of stored session.
 
         Args:
-            notes: List of note dictionaries from cache
+            notes: List of note dictionaries from MCP API
 
         Returns:
             List of notes that haven't been processed yet
@@ -275,108 +249,74 @@ class GranolaIntegration(BaseIntegration):
         new_notes = [note for note in notes if note["id"] not in processed]
 
         logger.debug(
-            f"Filtered {len(notes)} notes: {len(new_notes)} new, {len(processed)} already processed"
+            f"Filtered {len(notes)} notes: {len(new_notes)} new, "
+            f"{len(processed)} already processed"
         )
 
         return new_notes
 
-    def _extract_actionable_item(self, note: dict) -> ActionableItem | None:
-        """Extract actionable item from Granola note."""
-        # Build description from panels (ProseMirror JSON content)
-        content_parts = []
+    def _extract_actionable_item(self, meeting: dict) -> ActionableItem | None:
+        """Extract actionable item from MCP meeting response.
 
-        # Extract enhanced notes (AI-generated summary)
-        panels = note.get("panels", {})
-        if "enhanced_notes" in panels:
-            enhanced = self._prosemirror_to_text(panels["enhanced_notes"])
-            if enhanced:
-                content_parts.append(f"**AI Summary:**\n{enhanced}")
+        Expected MCP response structure:
+        {
+            "id": "note123",
+            "title": "Team Standup",
+            "date": "2026-02-11T10:00:00Z",
+            "attendees": ["alice@example.com", "bob@example.com"],
+            "content": "Meeting notes content...",
+            "workspace_id": "workspace123"
+        }
 
-        # Extract user notes
-        if "my_notes" in panels:
-            my_notes = self._prosemirror_to_text(panels["my_notes"])
-            if my_notes:
-                content_parts.append(f"**My Notes:**\n{my_notes}")
+        Args:
+            meeting: Meeting dict from MCP API
 
-        # Combine content
-        description = "\n\n".join(content_parts) if content_parts else ""
+        Returns:
+            ActionableItem or None if content is empty
+        """
+        content = meeting.get("content", "")
+        title = meeting.get("title", "Untitled Meeting")
+
+        # Skip meetings with no content
+        if not content or not content.strip():
+            logger.debug(f"Skipping meeting '{title}' - no content")
+            return None
 
         # Add attendee context
-        people = note.get("people", [])
-        if people and isinstance(people, list):
-            # Handle both string names and potential object format
-            attendee_names = [
-                p if isinstance(p, str) else p.get("name", "Unknown") for p in people[:5]
-            ]
-            attendees = ", ".join(attendee_names)
-            description += f"\n\n**Attendees:** {attendees}"
+        attendees = meeting.get("attendees", [])
+        if attendees:
+            # Handle both email strings and potential object format
+            attendee_list = []
+            for attendee in attendees[:5]:
+                if isinstance(attendee, str):
+                    attendee_list.append(attendee)
+                elif isinstance(attendee, dict):
+                    attendee_list.append(attendee.get("email", attendee.get("name", "Unknown")))
 
-        # Create actionable item
+            if attendee_list:
+                attendee_str = ", ".join(attendee_list)
+                content += f"\n\n**Attendees:** {attendee_str}"
+
+        # Parse date for metadata
+        meeting_date = self._parse_date(meeting.get("date", ""))
+
         return ActionableItem(
             type=ActionableItemType.DOCUMENT_REVIEW,
-            title=f"Review meeting: {note['title']}",
-            description=description[:1000],  # Limit length for LLM context
+            title=f"Review meeting: {title}",
+            description=content[:1000],  # Limit length for LLM context
             source=IntegrationType.GRANOLA,
-            source_reference=note["id"],
+            source_reference=meeting["id"],
             due_date=None,
             priority="medium",
             tags=["meeting-notes", "granola"],
             metadata={
-                "note_id": note["id"],
-                "workspace_id": note.get("workspace_id"),
-                "created_at": note["created_at"].isoformat(),
-                "updated_at": note["updated_at"].isoformat(),
-                "url": note["url"],
-                "attendees": people,
+                "note_id": meeting["id"],
+                "workspace_id": meeting.get("workspace_id"),
+                "date": meeting.get("date"),
+                "attendees": attendees,
             },
             account_id=self.account_id,
         )
-
-    def _prosemirror_to_text(self, panel_data: dict) -> str:
-        """Convert ProseMirror JSON format to plain text."""
-        if not panel_data or not isinstance(panel_data, dict):
-            return ""
-
-        content = panel_data.get("content", [])
-        if not content:
-            return ""
-
-        lines = []
-
-        def extract_text(node: dict) -> str:
-            """Recursively extract text from ProseMirror node."""
-            node_type = node.get("type", "")
-
-            # Text nodes
-            if node_type == "text":
-                return node.get("text", "")
-
-            # Container nodes - recurse
-            if "content" in node:
-                parts = [extract_text(child) for child in node["content"]]
-                text = "".join(parts)
-
-                # Add formatting based on node type
-                if node_type == "heading":
-                    level = node.get("attrs", {}).get("level", 1)
-                    return f"\n{'#' * level} {text}\n"
-                elif node_type == "paragraph":
-                    return f"{text}\n"
-                elif node_type in ["bulletList", "orderedList"]:
-                    return text
-                elif node_type == "listItem":
-                    return f"• {text}"
-                else:
-                    return text
-
-            return ""
-
-        for node in content:
-            text = extract_text(node)
-            if text.strip():
-                lines.append(text)
-
-        return "\n".join(lines).strip()
 
     def mark_note_processed(
         self,
@@ -403,7 +343,7 @@ class GranolaIntegration(BaseIntegration):
             # P1 Fix #004: Check if already processed (prevents race condition)
             existing = db.query(ProcessedGranolaNote).filter(
                 ProcessedGranolaNote.note_id == note_id,
-                ProcessedGranolaNote.account_id == self.account_id
+                ProcessedGranolaNote.account_id == self.account_id,
             ).first()
 
             if existing:

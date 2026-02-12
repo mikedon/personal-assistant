@@ -340,13 +340,13 @@ Replace `GranolaIntegration` with an MCP client-based implementation that:
    - `_prosemirror_to_text()` - **REMOVE** (MCP returns plain text content)
 
 **Acceptance Criteria:**
-- [ ] `authenticate()` uses OAuth flow instead of file checks
-- [ ] `poll()` calls MCP API instead of reading cache file
-- [ ] `_extract_actionable_item()` works with MCP response structure
-- [ ] Duplicate tracking still functional via `processed_granola_notes`
-- [ ] All P1 fixes preserved (session lifecycle, race conditions, transactions)
-- [ ] Error handling uses `PollError` consistently
-- [ ] HTTP requests logged via `_log_http_request()` callback
+- [x] `authenticate()` uses OAuth flow instead of file checks
+- [x] `poll()` calls MCP API instead of reading cache file
+- [x] `_extract_actionable_item()` works with MCP response structure
+- [x] Duplicate tracking still functional via `processed_granola_notes`
+- [x] All P1 fixes preserved (session lifecycle, race conditions, transactions)
+- [x] Error handling uses `PollError` consistently
+- [x] HTTP requests logged via `_log_http_request()` callback
 
 ---
 
