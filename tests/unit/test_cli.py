@@ -1344,7 +1344,7 @@ class TestAccountsCommands:
         mock_oauth.get_credentials.return_value = mock_creds
         mock_oauth_class.return_value = mock_oauth
 
-        result = runner.invoke(cli, ["accounts", "authenticate", "personal"])
+        result = runner.invoke(cli, ["accounts", "authenticate", "google", "personal"])
 
         assert result.exit_code == 0
         assert "Successfully authenticated" in result.output or "✓" in result.output
@@ -1360,7 +1360,7 @@ class TestAccountsCommands:
         ]
         mock_get_config.return_value = mock_config
 
-        result = runner.invoke(cli, ["accounts", "authenticate", "nonexistent"])
+        result = runner.invoke(cli, ["accounts", "authenticate", "google", "nonexistent"])
 
         assert result.exit_code == 0
         assert "not found" in result.output
@@ -1386,7 +1386,7 @@ class TestAccountsCommands:
         mock_oauth.get_credentials.side_effect = Exception("OAuth error")
         mock_oauth_class.return_value = mock_oauth
 
-        result = runner.invoke(cli, ["accounts", "authenticate", "personal"])
+        result = runner.invoke(cli, ["accounts", "authenticate", "google", "personal"])
 
         assert result.exit_code == 0
         assert "error" in result.output.lower() or "failed" in result.output.lower()

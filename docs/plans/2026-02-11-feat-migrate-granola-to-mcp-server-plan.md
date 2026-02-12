@@ -601,7 +601,7 @@ Replace `GranolaIntegration` with an MCP client-based implementation that:
    - Add config option to disable Granola entirely
 
 **Acceptance Criteria:**
-- [ ] All unit tests updated and passing
+- [x] All unit tests updated and passing (488 tests pass)
 - [ ] OAuth flow tested manually with real browser
 - [ ] Polling works with real Granola account
 - [ ] Duplicate tracking verified (no re-processing)
