@@ -523,38 +523,97 @@ def accounts_list():
 
 
 @accounts.command("authenticate")
+@click.argument("account_type")
 @click.argument("account_id")
-def accounts_authenticate(account_id: str):
-    """Run OAuth flow for a specific account."""
+def accounts_authenticate(account_type: str, account_id: str):
+    """Run OAuth flow for a specific account.
+
+    Examples:
+        pa accounts authenticate google personal
+        pa accounts authenticate granola all
+    """
     config = get_config()
 
-    # Find account config
-    account_config = next(
-        (acc for acc in config.google.accounts if acc.account_id == account_id),
-        None,
-    )
-
-    if not account_config:
-        console.print(f"[red]Account not found: {account_id}[/red]")
-        return
-
-    # Run OAuth flow
-    from src.integrations.oauth_utils import GoogleOAuthManager
-
-    try:
-        oauth_manager = GoogleOAuthManager(
-            credentials_path=account_config.credentials_path,
-            token_path=account_config.token_path,
-            scopes=account_config.scopes,
+    if account_type == "google":
+        # Find Google account config
+        account_config = next(
+            (acc for acc in config.google.accounts if acc.account_id == account_id),
+            None,
         )
 
-        creds = oauth_manager.get_credentials()
-        if creds:
-            console.print(f"[green]✓ Successfully authenticated {account_id}[/green]")
-        else:
-            console.print(f"[red]✗ Authentication failed for {account_id}[/red]")
-    except Exception as e:
-        console.print(f"[red]✗ Authentication error: {e}[/red]")
+        if not account_config:
+            console.print(f"[red]Account not found: {account_id}[/red]")
+            console.print("[yellow]Available Google accounts:[/yellow]")
+            for acc in config.google.accounts:
+                console.print(f"  - {acc.account_id} ({acc.display_name})")
+            return
+
+        # Run Google OAuth flow
+        from src.integrations.oauth_utils import GoogleOAuthManager
+
+        try:
+            oauth_manager = GoogleOAuthManager(
+                credentials_path=account_config.credentials_path,
+                token_path=account_config.token_path,
+                scopes=account_config.scopes,
+            )
+
+            creds = oauth_manager.get_credentials()
+            if creds:
+                console.print(f"[green]✓ Successfully authenticated Google account: {account_id}[/green]")
+            else:
+                console.print(f"[red]✗ Authentication failed for {account_id}[/red]")
+        except Exception as e:
+            console.print(f"[red]✗ Authentication error: {e}[/red]")
+
+    elif account_type == "granola":
+        # Find Granola workspace config
+        workspace_config = next(
+            (ws for ws in config.granola.workspaces if ws.workspace_id == account_id),
+            None,
+        )
+
+        if not workspace_config:
+            console.print(f"[red]Workspace not found: {account_id}[/red]")
+            console.print("[yellow]Available Granola workspaces:[/yellow]")
+            for ws in config.granola.workspaces:
+                display_name = ws.display_name or ws.workspace_id
+                console.print(f"  - {ws.workspace_id} ({display_name})")
+            return
+
+        # Run Granola OAuth flow
+        from pathlib import Path
+        from src.integrations.granola_oauth import GranolaOAuthManager
+
+        try:
+            # Get token path
+            if workspace_config.token_path:
+                token_path = Path(workspace_config.token_path)
+            else:
+                token_path = Path.home() / ".personal-assistant" / "token.granola.json"
+
+            console.print("[bold]Starting Granola OAuth authentication...[/bold]")
+            console.print("A browser window will open for you to authorize access.")
+            console.print()
+
+            oauth_manager = GranolaOAuthManager(token_path)
+
+            # Run async authentication
+            import asyncio
+            token = asyncio.run(oauth_manager.authenticate())
+
+            if token:
+                console.print()
+                console.print(f"[green]✓ Successfully authenticated Granola workspace: {account_id}[/green]")
+                console.print(f"[dim]Token saved to: {token_path}[/dim]")
+            else:
+                console.print(f"[red]✗ Authentication failed for {account_id}[/red]")
+        except Exception as e:
+            console.print(f"[red]✗ Authentication error: {e}[/red]")
+
+    else:
+        console.print(f"[red]Unknown account type: {account_type}[/red]")
+        console.print("[yellow]Supported account types: google, granola[/yellow]")
 
 
 # --- Task Commands ---

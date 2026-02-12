@@ -468,11 +468,11 @@ Replace `GranolaIntegration` with an MCP client-based implementation that:
    ```
 
 **Acceptance Criteria:**
-- [ ] Config models support optional token_path
-- [ ] `config.example.yaml` shows MCP configuration
-- [ ] `pa accounts authenticate granola <id>` runs OAuth flow
-- [ ] README documents MCP setup process
-- [ ] README notes limitations (free tier 30 days, rate limits)
+- [x] Config models support optional token_path
+- [x] `config.example.yaml` shows MCP configuration
+- [x] `pa accounts authenticate granola <id>` runs OAuth flow
+- [x] README documents MCP setup process
+- [x] README notes limitations (free tier 30 days, rate limits)
 
 ---
 

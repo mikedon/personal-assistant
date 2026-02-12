@@ -132,6 +132,10 @@ class GranolaWorkspaceConfig(BaseModel):
         le=1440,
         description="Polling frequency in minutes",
     )
+    token_path: str | None = Field(
+        default=None,
+        description="Path to OAuth token file (default: ~/.personal-assistant/token.granola.json)",
+    )
 
     @field_validator("workspace_id")
     @classmethod

@@ -80,15 +80,17 @@ slack:
     - "important-updates"
 
 granola:
-  # Granola meeting notes integration (reads from local cache)
+  # Granola meeting notes integration (via official MCP server)
   enabled: true
   workspaces:
     # Scan all workspaces
     - workspace_id: "all"
       display_name: "All Workspaces"
       enabled: true
-      lookback_days: 7  # How many days back to scan for new notes
+      lookback_days: 7  # How many days back to scan for new notes (free tier: max 30 days)
       polling_interval_minutes: 15  # How often to check for new notes
+      # Optional: custom token path (defaults to ~/.personal-assistant/token.granola.json)
+      # token_path: "/custom/path/token.granola.json"
 
     # Example: Specific workspace
     # - workspace_id: "engineering"

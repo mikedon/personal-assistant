@@ -121,13 +121,17 @@ pa tasks list --account work       # Show only work account tasks
 
 Tasks created from each account are automatically tagged with the account ID, allowing you to separate personal and work tasks.
 
-#### Granola Meeting Notes Setup
+#### Granola Meeting Notes Setup (MCP Server)
 
-The assistant can automatically scan your Granola meeting notes for actionable items and create tasks:
+The assistant integrates with Granola via the official MCP (Model Context Protocol) server for meeting notes.
 
-1. **Install Granola**: Make sure the Granola desktop app is installed and has synced meeting notes
+**Prerequisites:**
+- Granola desktop app installed
+- Granola account (free or paid tier)
 
-2. **Configure Granola integration** in `config.yaml`:
+**Setup:**
+
+1. **Configure Granola** in `config.yaml`:
 ```yaml
 granola:
   enabled: true
@@ -135,23 +139,37 @@ granola:
     - workspace_id: "all"  # Scan all workspaces
       display_name: "All Workspaces"
       enabled: true
-      lookback_days: 7  # Scan notes from last 7 days
+      lookback_days: 7  # Scan notes from last 7 days (free tier: max 30 days)
       polling_interval_minutes: 15  # Check for new notes every 15 minutes
 ```
 
-3. **Cache File Location**: The integration reads from Granola's local cache file:
-   - macOS: `~/Library/Application Support/Granola/cache-v3.json`
-   - Windows: `%APPDATA%\Granola\cache-v3.json`
-   - Linux: `~/.config/Granola/cache-v3.json`
+2. **Authenticate via OAuth**:
+```bash
+pa accounts authenticate granola all
+```
 
-4. **What It Does**:
-   - Scans Granola meeting notes for action items using LLM
-   - Extracts tasks with context (attendees, meeting title, notes)
-   - Tracks processed notes to avoid duplicates
-   - Links tasks back to original meeting notes
-   - Supports multiple workspaces
+This will:
+- Open your browser for Granola authorization
+- Store OAuth token in `~/.personal-assistant/token.granola.json`
+- Enable automatic token refresh
 
-**Privacy Note**: The integration reads from your local Granola cache file - no API calls are made to Granola's servers. All processing happens locally.
+3. **Start the agent**:
+```bash
+pa agent start
+```
+
+**Features:**
+- Automatically scans meeting notes for action items
+- Tracks processed notes to avoid duplicates
+- Supports multiple workspaces
+- OAuth-based authentication (secure token storage)
+- Uses official Granola MCP API
+
+**Limitations (Granola MCP Server):**
+- **Free tier**: Last 30 days of notes only
+- **Rate limit**: ~100 requests/minute
+- **Shared notes**: Not accessible via MCP
+- **Transcripts**: Require paid Granola tier
 
 ## Usage
 
