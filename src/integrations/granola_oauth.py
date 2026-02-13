@@ -36,7 +36,7 @@ class GranolaOAuthManager:
     MCP_SERVER_URL = "https://mcp.granola.ai/mcp"
     WELL_KNOWN_URL = "https://mcp.granola.ai/.well-known/oauth-authorization-server"
     REDIRECT_URI = "http://localhost:8765/callback"
-    SCOPES = ["meetings:read"]
+    SCOPES: list[str] = []  # Empty by default - Granola may not require scopes
 
     # OAuth endpoints (discovered dynamically)
     _oauth_metadata: dict | None = None
@@ -129,8 +129,11 @@ class GranolaOAuthManager:
                 "grant_types": ["authorization_code", "refresh_token"],
                 "response_types": ["code"],
                 "token_endpoint_auth_method": "none",  # Public client (PKCE)
-                "scope": " ".join(self.SCOPES),
             }
+
+            # Only include scope if we have scopes to request
+            if self.SCOPES:
+                client_metadata["scope"] = " ".join(self.SCOPES)
 
             async with httpx.AsyncClient() as client:
                 response = await client.post(
@@ -196,7 +199,6 @@ class GranolaOAuthManager:
             auth_params = {
                 "response_type": "code",
                 "redirect_uri": self.REDIRECT_URI,
-                "scope": " ".join(self.SCOPES),
                 "code_challenge": code_challenge,
                 "code_challenge_method": "S256",
             }
@@ -205,10 +207,16 @@ class GranolaOAuthManager:
             if self._client_id:
                 auth_params["client_id"] = self._client_id
 
+            # Only include scope if we have scopes to request
+            if self.SCOPES:
+                auth_params["scope"] = " ".join(self.SCOPES)
+
             auth_url = f"{auth_endpoint}?{urlencode(auth_params)}"
 
             # Open browser for authorization
             logger.info("Opening browser for Granola authorization...")
+            logger.debug(f"Authorization URL: {auth_url}")
+            logger.debug(f"Auth params: {auth_params}")
             webbrowser.open(auth_url)
 
             # Wait for callback (single request)
@@ -448,8 +456,12 @@ class OAuthCallbackServer(BaseHTTPRequestHandler):
             self.send_header("Content-type", "text/html")
             self.end_headers()
             error = query_components.get("error", ["Unknown error"])[0]
+            error_description = query_components.get("error_description", [""])[0]
+            error_message = f"Error: {error}"
+            if error_description:
+                error_message += f"<br>Description: {error_description}"
             self.wfile.write(
-                f"<html><body><h1>Authentication Failed</h1><p>Error: {error}</p></body></html>".encode()
+                f"<html><body><h1>Authentication Failed</h1><p>{error_message}</p></body></html>".encode()
             )
 
     def log_message(self, format: str, *args) -> None:
