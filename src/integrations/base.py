@@ -17,6 +17,7 @@ class IntegrationType(str, Enum):
     CALENDAR = "calendar"
     SLACK = "slack"
     DRIVE = "drive"
+    GRANOLA = "granola"
 
 
 class ActionableItemType(str, Enum):

@@ -523,38 +523,310 @@ def accounts_list():
 
 
 @accounts.command("authenticate")
+@click.argument("account_type")
 @click.argument("account_id")
-def accounts_authenticate(account_id: str):
-    """Run OAuth flow for a specific account."""
+def accounts_authenticate(account_type: str, account_id: str):
+    """Run OAuth flow for a specific account.
+
+    Examples:
+        pa accounts authenticate google personal
+        pa accounts authenticate granola all
+    """
     config = get_config()
 
-    # Find account config
-    account_config = next(
-        (acc for acc in config.google.accounts if acc.account_id == account_id),
-        None,
-    )
-
-    if not account_config:
-        console.print(f"[red]Account not found: {account_id}[/red]")
-        return
-
-    # Run OAuth flow
-    from src.integrations.oauth_utils import GoogleOAuthManager
-
-    try:
-        oauth_manager = GoogleOAuthManager(
-            credentials_path=account_config.credentials_path,
-            token_path=account_config.token_path,
-            scopes=account_config.scopes,
+    if account_type == "google":
+        # Find Google account config
+        account_config = next(
+            (acc for acc in config.google.accounts if acc.account_id == account_id),
+            None,
         )
 
-        creds = oauth_manager.get_credentials()
-        if creds:
-            console.print(f"[green]✓ Successfully authenticated {account_id}[/green]")
+        if not account_config:
+            console.print(f"[red]Account not found: {account_id}[/red]")
+            console.print("[yellow]Available Google accounts:[/yellow]")
+            for acc in config.google.accounts:
+                console.print(f"  - {acc.account_id} ({acc.display_name})")
+            return
+
+        # Run Google OAuth flow
+        from src.integrations.oauth_utils import GoogleOAuthManager
+
+        try:
+            oauth_manager = GoogleOAuthManager(
+                credentials_path=account_config.credentials_path,
+                token_path=account_config.token_path,
+                scopes=account_config.scopes,
+            )
+
+            creds = oauth_manager.get_credentials()
+            if creds:
+                console.print(f"[green]✓ Successfully authenticated Google account: {account_id}[/green]")
+            else:
+                console.print(f"[red]✗ Authentication failed for {account_id}[/red]")
+        except Exception as e:
+            console.print(f"[red]✗ Authentication error: {e}[/red]")
+
+    elif account_type == "granola":
+        # Find Granola workspace config
+        workspace_config = next(
+            (ws for ws in config.granola.workspaces if ws.workspace_id == account_id),
+            None,
+        )
+
+        if not workspace_config:
+            console.print(f"[red]Workspace not found: {account_id}[/red]")
+            console.print("[yellow]Available Granola workspaces:[/yellow]")
+            for ws in config.granola.workspaces:
+                display_name = ws.display_name or ws.workspace_id
+                console.print(f"  - {ws.workspace_id} ({display_name})")
+            return
+
+        # Run Granola OAuth flow
+        from pathlib import Path
+        from src.integrations.granola_oauth import GranolaOAuthManager
+
+        try:
+            # Get token path
+            if workspace_config.token_path:
+                token_path = Path(workspace_config.token_path)
+            else:
+                token_path = Path.home() / ".personal-assistant" / "token.granola.json"
+
+            console.print("[bold]Starting Granola OAuth authentication...[/bold]")
+            console.print("A browser window will open for you to authorize access.")
+            console.print()
+
+            oauth_manager = GranolaOAuthManager(token_path)
+
+            # Run async authentication
+            import asyncio
+            token = asyncio.run(oauth_manager.authenticate())
+
+            if token:
+                console.print()
+                console.print(f"[green]✓ Successfully authenticated Granola workspace: {account_id}[/green]")
+                console.print(f"[dim]Token saved to: {token_path}[/dim]")
+            else:
+                console.print(f"[red]✗ Authentication failed for {account_id}[/red]")
+        except Exception as e:
+            console.print(f"[red]✗ Authentication error: {e}[/red]")
+
+    else:
+        console.print(f"[red]Unknown account type: {account_type}[/red]")
+        console.print("[yellow]Supported account types: google, granola[/yellow]")
+
+
+@accounts.command("granola-notes")
+@click.option("--limit", "-n", default=20, help="Number of notes to show")
+@click.option("--workspace", "-w", help="Filter by workspace ID")
+def accounts_granola_notes(limit: int, workspace: str | None):
+    """Show processed Granola meeting notes.
+
+    Displays which Granola meetings have been processed for actionable items.
+
+    Examples:
+        pa accounts granola-notes
+        pa accounts granola-notes --limit 50
+        pa accounts granola-notes --workspace all
+    """
+    from src.models import ProcessedGranolaNote
+
+    with get_db_session() as db:
+        query = db.query(ProcessedGranolaNote).order_by(
+            ProcessedGranolaNote.processed_at.desc()
+        )
+
+        if workspace:
+            query = query.filter(ProcessedGranolaNote.workspace_id == workspace)
+
+        notes = query.limit(limit).all()
+
+        if not notes:
+            console.print("[yellow]No Granola notes have been processed yet.[/yellow]")
+            return
+
+        table = Table(title=f"Processed Granola Meeting Notes (showing {len(notes)})")
+        table.add_column("Title", style="cyan", no_wrap=False, max_width=40)
+        table.add_column("Workspace", style="green")
+        table.add_column("Meeting Date", style="blue")
+        table.add_column("Processed", style="magenta")
+        table.add_column("Tasks", style="yellow", justify="right")
+
+        for note in notes:
+            meeting_date = note.note_created_at.strftime("%b %d, %Y %I:%M %p")
+            processed_date = note.processed_at.strftime("%b %d %I:%M %p")
+
+            table.add_row(
+                note.note_title[:40],
+                note.workspace_id,
+                meeting_date,
+                processed_date,
+                str(note.tasks_created_count),
+            )
+
+        console.print(table)
+        console.print(f"\n[dim]Total processed notes: {len(notes)}[/dim]")
+
+        # Show summary stats
+        total_tasks = sum(note.tasks_created_count for note in notes)
+        console.print(f"[dim]Total tasks created: {total_tasks}[/dim]")
+
+
+@accounts.command("granola-reprocess")
+@click.argument("search", required=False)
+@click.option("--id", "meeting_id", help="Meeting ID to reprocess")
+@click.option("--title", help="Search for meeting by title")
+@click.option("--all", "reprocess_all", is_flag=True, help="Reprocess all meetings")
+def accounts_granola_reprocess(search: str | None, meeting_id: str | None, title: str | None, reprocess_all: bool):
+    """Mark Granola meeting(s) for reprocessing.
+
+    Removes meeting(s) from the processed list so they will be picked up
+    on the next agent poll and reprocessed for action items.
+
+    Examples:
+        pa accounts granola-reprocess --id 4e4d36e7-a98c-4ab6-a8b1-6431d9fbffdd
+        pa accounts granola-reprocess --title "Docker desktop"
+        pa accounts granola-reprocess "Roberta"
+        pa accounts granola-reprocess --all
+    """
+    from src.models import ProcessedGranolaNote
+
+    with get_db_session() as db:
+        # Build query
+        if reprocess_all:
+            # Confirm before deleting all
+            count = db.query(ProcessedGranolaNote).count()
+            if count == 0:
+                console.print("[yellow]No processed meetings found.[/yellow]")
+                return
+
+            console.print(f"[yellow]⚠️  This will mark {count} meeting(s) for reprocessing.[/yellow]")
+            confirm = click.confirm("Are you sure?", default=False)
+            if not confirm:
+                console.print("[dim]Cancelled.[/dim]")
+                return
+
+            db.query(ProcessedGranolaNote).delete()
+            db.commit()
+            console.print(f"[green]✓ Marked {count} meeting(s) for reprocessing.[/green]")
+            console.print("[dim]Run 'pa agent poll' to reprocess meetings.[/dim]")
+            return
+
+        # Find by meeting ID
+        if meeting_id:
+            note = db.query(ProcessedGranolaNote).filter(
+                ProcessedGranolaNote.note_id == meeting_id
+            ).first()
+
+            if not note:
+                console.print(f"[red]✗ No processed meeting found with ID: {meeting_id}[/red]")
+                return
+
+            console.print(f"[cyan]Meeting:[/cyan] {note.note_title}")
+            console.print(f"[dim]ID: {note.note_id}[/dim]")
+            console.print(f"[dim]Processed: {note.processed_at.strftime('%b %d, %Y %I:%M %p')}[/dim]")
+            console.print(f"[dim]Tasks created: {note.tasks_created_count}[/dim]")
+
+            confirm = click.confirm("\nMark this meeting for reprocessing?", default=True)
+            if not confirm:
+                console.print("[dim]Cancelled.[/dim]")
+                return
+
+            db.delete(note)
+            db.commit()
+            console.print("[green]✓ Meeting marked for reprocessing.[/green]")
+            console.print("[dim]Run 'pa agent poll' to reprocess.[/dim]")
+            return
+
+        # Find by title search (either --title or positional argument)
+        search_term = title or search
+        if not search_term:
+            console.print("[red]✗ Please provide a search term, --id, --title, or --all[/red]")
+            console.print("[dim]Example: pa accounts granola-reprocess 'Docker desktop'[/dim]")
+            return
+
+        # Search for matching meetings
+        notes = db.query(ProcessedGranolaNote).filter(
+            ProcessedGranolaNote.note_title.ilike(f"%{search_term}%")
+        ).order_by(ProcessedGranolaNote.processed_at.desc()).all()
+
+        if not notes:
+            console.print(f"[yellow]No processed meetings found matching: {search_term}[/yellow]")
+            return
+
+        if len(notes) == 1:
+            # Single match - show details and confirm
+            note = notes[0]
+            console.print(f"[cyan]Found:[/cyan] {note.note_title}")
+            console.print(f"[dim]ID: {note.note_id}[/dim]")
+            console.print(f"[dim]Processed: {note.processed_at.strftime('%b %d, %Y %I:%M %p')}[/dim]")
+            console.print(f"[dim]Tasks created: {note.tasks_created_count}[/dim]")
+
+            confirm = click.confirm("\nMark this meeting for reprocessing?", default=True)
+            if not confirm:
+                console.print("[dim]Cancelled.[/dim]")
+                return
+
+            db.delete(note)
+            db.commit()
+            console.print("[green]✓ Meeting marked for reprocessing.[/green]")
+            console.print("[dim]Run 'pa agent poll' to reprocess.[/dim]")
         else:
-            console.print(f"[red]✗ Authentication failed for {account_id}[/red]")
-    except Exception as e:
-        console.print(f"[red]✗ Authentication error: {e}[/red]")
+            # Multiple matches - show list and let user choose
+            console.print(f"[cyan]Found {len(notes)} matching meetings:[/cyan]\n")
+
+            table = Table(show_header=True, header_style="bold")
+            table.add_column("#", style="dim", width=3)
+            table.add_column("Title", style="cyan", no_wrap=False)
+            table.add_column("Date", style="blue")
+            table.add_column("Tasks", style="yellow", justify="right")
+
+            for i, note in enumerate(notes, 1):
+                meeting_date = note.note_created_at.strftime("%b %d, %Y")
+                table.add_row(
+                    str(i),
+                    note.note_title[:60],
+                    meeting_date,
+                    str(note.tasks_created_count),
+                )
+
+            console.print(table)
+
+            # Ask user to choose
+            console.print("\n[dim]Enter number to reprocess, 'all' for all matches, or 'cancel' to abort:[/dim]")
+            choice = click.prompt("Choice", type=str, default="cancel")
+
+            if choice.lower() == "cancel":
+                console.print("[dim]Cancelled.[/dim]")
+                return
+
+            if choice.lower() == "all":
+                confirm = click.confirm(f"Mark all {len(notes)} meeting(s) for reprocessing?", default=False)
+                if not confirm:
+                    console.print("[dim]Cancelled.[/dim]")
+                    return
+
+                for note in notes:
+                    db.delete(note)
+                db.commit()
+                console.print(f"[green]✓ Marked {len(notes)} meeting(s) for reprocessing.[/green]")
+                console.print("[dim]Run 'pa agent poll' to reprocess.[/dim]")
+                return
+
+            # Single choice by number
+            try:
+                idx = int(choice) - 1
+                if idx < 0 or idx >= len(notes):
+                    console.print("[red]✗ Invalid choice.[/red]")
+                    return
+
+                note = notes[idx]
+                db.delete(note)
+                db.commit()
+                console.print(f"[green]✓ Meeting '{note.note_title}' marked for reprocessing.[/green]")
+                console.print("[dim]Run 'pa agent poll' to reprocess.[/dim]")
+            except ValueError:
+                console.print("[red]✗ Invalid choice.[/red]")
 
 
 # --- Task Commands ---

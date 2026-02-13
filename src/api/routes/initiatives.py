@@ -202,6 +202,7 @@ def _task_to_response(task) -> TaskResponse:
         priority=task.priority,
         source=task.source,
         source_reference=task.source_reference,
+        account_id=task.account_id,
         priority_score=task.priority_score,
         due_date=task.due_date,
         created_at=task.created_at,

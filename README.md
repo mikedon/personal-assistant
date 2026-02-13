@@ -1,13 +1,14 @@
 # Personal Assistant
 
-A personal assistant agent that helps track tasks, monitors multiple data sources (email, calendar, Slack, meeting notes), and provides productivity recommendations.
+A personal assistant agent that helps track tasks, monitors multiple data sources (email, calendar, Slack, Granola meeting notes), and provides productivity recommendations.
 
 ## Features
 
 - **Task Management**: Create, update, and prioritize tasks with automatic scoring
 - **Voice Input**: Create tasks by speaking - uses Whisper for transcription and LLM for task extraction
-- **Multi-Source Monitoring**: Track important information from email, Slack, calendar, and Google Drive
+- **Multi-Source Monitoring**: Track important information from email, Slack, calendar, Google Drive, and Granola meeting notes
 - **AI-Powered Agent**: Uses LLM to extract tasks and generate productivity recommendations
+- **Meeting Notes Integration**: Automatically scan Granola meeting notes for action items
 - **API-First Design**: RESTful API for programmatic access
 - **Local Operation**: Runs entirely on your machine with SQLite storage
 - **Configurable**: YAML-based configuration for easy customization
@@ -119,6 +120,56 @@ pa tasks list --account work       # Show only work account tasks
 ```
 
 Tasks created from each account are automatically tagged with the account ID, allowing you to separate personal and work tasks.
+
+#### Granola Meeting Notes Setup (MCP Server)
+
+The assistant integrates with Granola via the official MCP (Model Context Protocol) server for meeting notes.
+
+**Prerequisites:**
+- Granola desktop app installed
+- Granola account (free or paid tier)
+
+**Setup:**
+
+1. **Configure Granola** in `config.yaml`:
+```yaml
+granola:
+  enabled: true
+  workspaces:
+    - workspace_id: "all"  # Scan all workspaces
+      display_name: "All Workspaces"
+      enabled: true
+      lookback_days: 7  # Scan notes from last 7 days (free tier: max 30 days)
+      polling_interval_minutes: 15  # Check for new notes every 15 minutes
+```
+
+2. **Authenticate via OAuth**:
+```bash
+pa accounts authenticate granola all
+```
+
+This will:
+- Open your browser for Granola authorization
+- Store OAuth token in `~/.personal-assistant/token.granola.json`
+- Enable automatic token refresh
+
+3. **Start the agent**:
+```bash
+pa agent start
+```
+
+**Features:**
+- Automatically scans meeting notes for action items
+- Tracks processed notes to avoid duplicates
+- Supports multiple workspaces
+- OAuth-based authentication (secure token storage)
+- Uses official Granola MCP API
+
+**Limitations (Granola MCP Server):**
+- **Free tier**: Last 30 days of notes only
+- **Rate limit**: ~100 requests/minute
+- **Shared notes**: Not accessible via MCP
+- **Transcripts**: Require paid Granola tier
 
 ## Usage
 

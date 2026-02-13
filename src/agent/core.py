@@ -18,7 +18,7 @@ from apscheduler.triggers.interval import IntervalTrigger
 from sqlalchemy.orm import Session
 
 from src.integrations.base import ActionableItem, IntegrationType
-from src.integrations.manager import IntegrationManager
+from src.integrations.manager import IntegrationKey, IntegrationManager
 from src.models.database import get_db_session
 from src.models.task import TaskPriority, TaskSource
 from src.services.agent_log_service import AgentLogService
@@ -334,9 +334,15 @@ class AutonomousAgent:
                 if item.source:
                     items_by_integration[item.source].append(item)
 
-            # Process each integration's items
-            for integration_type, items in items_by_integration.items():
+            # Get all registered integration types to ensure we report on all of them
+            registered_integrations = set()
+            for key in self.integration_manager.integrations.keys():
+                registered_integrations.add(key.type)
+
+            # Process each integration (including those with 0 items)
+            for integration_type in registered_integrations:
                 start_time = time.time()
+                items = items_by_integration.get(integration_type, [])
 
                 result = PollResult(
                     integration=integration_type,
@@ -351,6 +357,11 @@ class AutonomousAgent:
                         )
                         result.tasks_created = tasks_created
                         result.tasks_suggested = tasks_suggested
+
+                        # If this is Granola, mark notes as processed
+                        if integration_type == IntegrationType.GRANOLA:
+                            self._mark_granola_notes_processed(items, tasks_created)
+
                     except Exception as e:
                         logger.error(f"Error processing items from {integration_type}: {e}")
                         result.error = str(e)
@@ -582,6 +593,58 @@ class AutonomousAgent:
                         created_task_ids.append(task_id)
 
         return created_task_ids, suggested_tasks
+
+    def _mark_granola_notes_processed(
+        self,
+        items: list[ActionableItem],
+        created_task_ids: list[int],
+    ) -> None:
+        """Mark Granola notes as processed in the database.
+
+        Args:
+            items: List of actionable items from Granola
+            created_task_ids: List of task IDs that were created
+        """
+        # Build mapping of source_reference to task count
+        tasks_per_note: dict[str, int] = {}
+        for item in items:
+            if item.source_reference:
+                tasks_per_note[item.source_reference] = tasks_per_note.get(item.source_reference, 0) + len(
+                    created_task_ids
+                ) // len(items)  # Rough distribution
+
+        # Mark each note as processed
+        for item in items:
+            if not item.source_reference or not item.account_id:
+                continue
+
+            # Get the Granola integration
+            key = IntegrationKey(IntegrationType.GRANOLA, item.account_id)
+            integration = self.integration_manager.integrations.get(key)
+
+            if not integration:
+                logger.warning(f"Granola integration not found for account: {item.account_id}")
+                continue
+
+            try:
+                # Extract note metadata from actionable item
+                note_title = item.title.replace("Review meeting: ", "")
+                note_created_at = None
+                if item.metadata and "created_at" in item.metadata:
+                    note_created_at = datetime.fromisoformat(item.metadata["created_at"])
+
+                if not note_created_at:
+                    note_created_at = datetime.now(UTC)
+
+                # Mark note as processed
+                integration.mark_note_processed(
+                    note_id=item.source_reference,
+                    note_title=note_title,
+                    note_created_at=note_created_at,
+                    tasks_created=tasks_per_note.get(item.source_reference, 0),
+                )
+            except Exception as e:
+                logger.error(f"Failed to mark Granola note {item.source_reference} as processed: {e}")
 
     def _should_auto_create_task(self, task: ExtractedTask, db: Session | None = None) -> bool:
         """Determine if a task should be auto-created based on autonomy level.

@@ -5,6 +5,7 @@ from src.models.database import Base, get_db, get_db_session, init_db
 from src.models.initiative import Initiative, InitiativePriority, InitiativeStatus
 from src.models.notification import Notification, NotificationType
 from src.models.pending_suggestion import PendingSuggestionModel, SuggestionStatus
+from src.models.processed_granola_note import ProcessedGranolaNote
 from src.models.task import Task, TaskPriority, TaskSource, TaskStatus
 
 __all__ = [
@@ -18,6 +19,7 @@ __all__ = [
     "Notification",
     "NotificationType",
     "PendingSuggestionModel",
+    "ProcessedGranolaNote",
     "SuggestionStatus",
     "Task",
     "TaskPriority",
