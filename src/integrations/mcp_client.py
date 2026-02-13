@@ -4,8 +4,10 @@ Implements the Model Context Protocol (MCP) client for interacting with
 Granola's official MCP server at https://mcp.granola.ai/mcp.
 
 Uses JSON-RPC 2.0 protocol for all tool calls.
+Handles both JSON and Server-Sent Events (SSE) responses.
 """
 
+import json
 import logging
 from typing import Any
 
@@ -76,6 +78,42 @@ class MCPClient:
         self._request_id += 1
         return self._request_id
 
+    def _parse_sse_response(self, sse_text: str) -> dict[str, Any]:
+        """Parse Server-Sent Events (SSE) format response.
+
+        SSE format:
+            event: message
+            data: {"result": {...}}
+
+        Args:
+            sse_text: Raw SSE response text
+
+        Returns:
+            Parsed JSON data from the SSE stream
+
+        Raises:
+            ValueError: If SSE format is invalid or contains no data
+        """
+        lines = sse_text.strip().split("\n")
+        data_lines = []
+
+        for line in lines:
+            line = line.strip()
+            if line.startswith("data: "):
+                # Extract JSON after "data: " prefix
+                data_lines.append(line[6:])  # Remove "data: " prefix
+
+        if not data_lines:
+            raise ValueError(f"No data lines found in SSE response: {sse_text[:200]}")
+
+        # Combine all data lines (SSE can split data across multiple lines)
+        json_str = "".join(data_lines)
+
+        try:
+            return json.loads(json_str)
+        except json.JSONDecodeError as e:
+            raise ValueError(f"Invalid JSON in SSE data: {e}\nData: {json_str[:500]}") from e
+
     async def _call_tool(
         self,
         tool_name: str,
@@ -116,24 +154,31 @@ class MCPClient:
             response.raise_for_status()
 
             # Log response details for debugging
+            content_type = response.headers.get("content-type", "unknown")
             logger.debug(f"Response status: {response.status_code}")
-            logger.debug(f"Response headers: {dict(response.headers)}")
-            logger.debug(f"Response content-type: {response.headers.get('content-type', 'unknown')}")
+            logger.debug(f"Response content-type: {content_type}")
             logger.debug(f"Response content (first 500 chars): {response.text[:500]}")
 
-            # Parse JSON-RPC response
+            # Parse response based on content-type
             try:
-                data = response.json()
+                if "text/event-stream" in content_type:
+                    # Parse Server-Sent Events (SSE) format
+                    logger.debug("Parsing SSE response")
+                    data = self._parse_sse_response(response.text)
+                else:
+                    # Parse regular JSON
+                    logger.debug("Parsing JSON response")
+                    data = response.json()
             except ValueError as e:
                 logger.error(
-                    f"Failed to parse JSON response from MCP tool '{tool_name}': {e}\n"
+                    f"Failed to parse response from MCP tool '{tool_name}': {e}\n"
                     f"Response status: {response.status_code}\n"
-                    f"Response headers: {dict(response.headers)}\n"
+                    f"Content-Type: {content_type}\n"
                     f"Response content: {response.text[:1000]}"
                 )
                 raise RuntimeError(
-                    f"Invalid JSON response from MCP tool '{tool_name}': {e}\n"
-                    f"Content-Type: {response.headers.get('content-type', 'unknown')}\n"
+                    f"Invalid response from MCP tool '{tool_name}': {e}\n"
+                    f"Content-Type: {content_type}\n"
                     f"Response: {response.text[:500]}"
                 ) from e
 

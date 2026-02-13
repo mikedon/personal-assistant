@@ -104,6 +104,7 @@ class TestMCPClient:
         mock_response = MagicMock()
         mock_response.json.return_value = sample_meetings_list
         mock_response.raise_for_status = MagicMock()
+        mock_response.headers = {"content-type": "application/json"}
 
         with patch.object(mcp_client.client, "post", new=AsyncMock(return_value=mock_response)):
             meetings = await mcp_client.list_meetings(limit=100)
@@ -312,6 +313,7 @@ class TestMCPClient:
         mock_response = MagicMock()
         mock_response.json.return_value = sample_meetings_list
         mock_response.raise_for_status = MagicMock()
+        mock_response.headers = {"content-type": "application/json"}
 
         with patch.object(mcp_client.client, "post", new=AsyncMock(return_value=mock_response)):
             # Make two calls
@@ -322,3 +324,44 @@ class TestMCPClient:
             calls = mcp_client.client.post.call_args_list
             assert calls[0][1]["json"]["id"] == 1
             assert calls[1][1]["json"]["id"] == 2
+
+    @pytest.mark.asyncio
+    async def test_list_meetings_sse_response(self, mcp_client):
+        """Test parsing Server-Sent Events (SSE) response."""
+        # Mock SSE response (as returned by Granola MCP server)
+        sse_response = """event: message
+data: {"jsonrpc": "2.0", "id": 1, "result": {"meetings": [{"id": "meeting1", "title": "Test Meeting", "date": "2026-02-12T10:00:00Z", "attendees": ["user@example.com"], "workspace_id": "workspace1"}]}}
+"""
+
+        mock_response = MagicMock()
+        mock_response.text = sse_response
+        mock_response.status_code = 200
+        mock_response.headers = {"content-type": "text/event-stream"}
+        mock_response.raise_for_status = MagicMock()
+
+        with patch.object(mcp_client.client, "post", new=AsyncMock(return_value=mock_response)):
+            meetings = await mcp_client.list_meetings(limit=10)
+
+            assert len(meetings) == 1
+            assert meetings[0]["id"] == "meeting1"
+            assert meetings[0]["title"] == "Test Meeting"
+
+    @pytest.mark.asyncio
+    async def test_parse_sse_multiline_data(self, mcp_client):
+        """Test parsing SSE with data split across multiple lines."""
+        # SSE can split data across multiple "data:" lines
+        sse_response = """event: message
+data: {"jsonrpc": "2.0",
+data: "id": 1,
+data: "result": {"meetings": []}}
+"""
+
+        mock_response = MagicMock()
+        mock_response.text = sse_response
+        mock_response.status_code = 200
+        mock_response.headers = {"content-type": "text/event-stream"}
+        mock_response.raise_for_status = MagicMock()
+
+        with patch.object(mcp_client.client, "post", new=AsyncMock(return_value=mock_response)):
+            meetings = await mcp_client.list_meetings(limit=10)
+            assert len(meetings) == 0
