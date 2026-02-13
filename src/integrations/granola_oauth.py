@@ -260,6 +260,12 @@ class GranolaOAuthManager:
 
                 token_response = response.json()
 
+            # Add client credentials to token data for future refresh operations
+            if self._client_id:
+                token_response["client_id"] = self._client_id
+            if self._client_secret:
+                token_response["client_secret"] = self._client_secret
+
             # Save token with secure permissions
             self._save_token(token_response)
 
@@ -322,14 +328,25 @@ class GranolaOAuthManager:
             metadata = await self._discover_oauth_metadata()
             token_endpoint = metadata["token_endpoint"]
 
+            # Build refresh request
+            refresh_data = {
+                "grant_type": "refresh_token",
+                "refresh_token": self._token_data["refresh_token"],
+                "resource": self.MCP_SERVER_URL,  # RFC 8807 resource indicator
+            }
+
+            # Include client_id if we have it (required by many OAuth servers)
+            if "client_id" in self._token_data:
+                refresh_data["client_id"] = self._token_data["client_id"]
+
+            # Include client_secret if we have it (for confidential clients)
+            if "client_secret" in self._token_data:
+                refresh_data["client_secret"] = self._token_data["client_secret"]
+
             async with httpx.AsyncClient() as client:
                 response = await client.post(
                     token_endpoint,
-                    data={
-                        "grant_type": "refresh_token",
-                        "refresh_token": self._token_data["refresh_token"],
-                        "resource": self.MCP_SERVER_URL,  # RFC 8807 resource indicator
-                    },
+                    data=refresh_data,
                     headers={"Accept": "application/json"},
                 )
 
@@ -340,9 +357,15 @@ class GranolaOAuthManager:
 
                 new_token_data = response.json()
 
-            # Preserve refresh token if not included in response
+            # Preserve values that may not be included in refresh response
             if "refresh_token" not in new_token_data:
                 new_token_data["refresh_token"] = self._token_data["refresh_token"]
+
+            if "client_id" in self._token_data and "client_id" not in new_token_data:
+                new_token_data["client_id"] = self._token_data["client_id"]
+
+            if "client_secret" in self._token_data and "client_secret" not in new_token_data:
+                new_token_data["client_secret"] = self._token_data["client_secret"]
 
             # Save refreshed token
             self._save_token(new_token_data)
