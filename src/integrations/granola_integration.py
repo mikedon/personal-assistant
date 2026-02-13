@@ -294,9 +294,14 @@ class GranolaIntegration(BaseIntegration):
         content = meeting.get("content", "")
         title = meeting.get("title", "Untitled Meeting")
 
-        # Skip meetings with no content
+        # Skip meetings with no content or incomplete notes
         if not content or not content.strip():
             logger.debug(f"Skipping meeting '{title}' - no content")
+            return None
+
+        # Skip meetings where Granola hasn't generated notes yet
+        if content.strip().lower() == "no summary":
+            logger.debug(f"Skipping meeting '{title}' - notes not ready (status: 'No summary')")
             return None
 
         # Add attendee context
