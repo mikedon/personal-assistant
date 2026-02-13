@@ -42,8 +42,14 @@ class TestGranolaOAuthManager:
 
     @pytest.mark.asyncio
     async def test_authenticate_success(self, token_path, mock_token_data):
-        """Test successful OAuth authentication flow."""
+        """Test successful MCP-compliant OAuth authentication flow with PKCE."""
         manager = GranolaOAuthManager(token_path)
+
+        # Mock OAuth metadata discovery
+        mock_metadata = {
+            "authorization_endpoint": "https://mcp.granola.ai/oauth/authorize",
+            "token_endpoint": "https://mcp.granola.ai/oauth/token",
+        }
 
         # Mock browser opening
         with patch("webbrowser.open") as mock_browser:
@@ -59,14 +65,28 @@ class TestGranolaOAuthManager:
 
                     mock_server.handle_request.side_effect = set_auth_code
 
-                    # Mock token exchange
-                    mock_response = MagicMock()
-                    mock_response.status_code = 200
-                    mock_response.json.return_value = mock_token_data
-
+                    # Mock HTTP responses
                     with patch("httpx.AsyncClient") as mock_client_class:
                         mock_client = MagicMock()
-                        mock_client.post = AsyncMock(return_value=mock_response)
+
+                        # Mock discovery response
+                        mock_discovery_response = MagicMock()
+                        mock_discovery_response.json.return_value = mock_metadata
+                        mock_discovery_response.raise_for_status = MagicMock()
+
+                        # Mock token exchange response
+                        mock_token_response = MagicMock()
+                        mock_token_response.status_code = 200
+                        mock_token_response.json.return_value = mock_token_data
+
+                        # Setup client to return different responses
+                        async def mock_request(url_or_method, *args, **kwargs):
+                            if ".well-known" in str(url_or_method):
+                                return mock_discovery_response
+                            return mock_token_response
+
+                        mock_client.get = AsyncMock(return_value=mock_discovery_response)
+                        mock_client.post = AsyncMock(return_value=mock_token_response)
                         mock_client.__aenter__ = AsyncMock(return_value=mock_client)
                         mock_client.__aexit__ = AsyncMock()
                         mock_client_class.return_value = mock_client
@@ -78,6 +98,11 @@ class TestGranolaOAuthManager:
                         assert token == "test_access_token"
                         mock_browser.assert_called_once()
                         assert token_path.exists()
+
+                        # Verify PKCE parameters were used
+                        call_args = mock_client.post.call_args
+                        assert "code_verifier" in call_args.kwargs["data"]
+                        assert "resource" in call_args.kwargs["data"]
 
     @pytest.mark.asyncio
     async def test_get_valid_token_from_file(self, token_path, mock_token_data):
@@ -116,6 +141,12 @@ class TestGranolaOAuthManager:
 
         manager = GranolaOAuthManager(token_path)
 
+        # Mock OAuth metadata discovery
+        mock_metadata = {
+            "authorization_endpoint": "https://mcp.granola.ai/oauth/authorize",
+            "token_endpoint": "https://mcp.granola.ai/oauth/token",
+        }
+
         # Mock refresh response
         new_token_data = {
             "access_token": "new_access_token",
@@ -123,13 +154,21 @@ class TestGranolaOAuthManager:
             "expires_in": 3600,
         }
 
-        mock_response = MagicMock()
-        mock_response.status_code = 200
-        mock_response.json.return_value = new_token_data
-
         with patch("httpx.AsyncClient") as mock_client_class:
             mock_client = MagicMock()
-            mock_client.post = AsyncMock(return_value=mock_response)
+
+            # Mock discovery response
+            mock_discovery_response = MagicMock()
+            mock_discovery_response.json.return_value = mock_metadata
+            mock_discovery_response.raise_for_status = MagicMock()
+
+            # Mock token response
+            mock_token_response = MagicMock()
+            mock_token_response.status_code = 200
+            mock_token_response.json.return_value = new_token_data
+
+            mock_client.get = AsyncMock(return_value=mock_discovery_response)
+            mock_client.post = AsyncMock(return_value=mock_token_response)
             mock_client.__aenter__ = AsyncMock(return_value=mock_client)
             mock_client.__aexit__ = AsyncMock()
             mock_client_class.return_value = mock_client
@@ -142,11 +181,17 @@ class TestGranolaOAuthManager:
 
     @pytest.mark.asyncio
     async def test_refresh_token_success(self, token_path):
-        """Test successful token refresh."""
+        """Test successful token refresh with resource indicator."""
         manager = GranolaOAuthManager(token_path)
         manager._token_data = {
             "access_token": "old_token",
             "refresh_token": "test_refresh_token",
+        }
+
+        # Mock OAuth metadata discovery
+        mock_metadata = {
+            "authorization_endpoint": "https://mcp.granola.ai/oauth/authorize",
+            "token_endpoint": "https://mcp.granola.ai/oauth/token",
         }
 
         # Mock refresh response
@@ -155,13 +200,21 @@ class TestGranolaOAuthManager:
             "expires_in": 3600,
         }
 
-        mock_response = MagicMock()
-        mock_response.status_code = 200
-        mock_response.json.return_value = new_token_data
-
         with patch("httpx.AsyncClient") as mock_client_class:
             mock_client = MagicMock()
-            mock_client.post = AsyncMock(return_value=mock_response)
+
+            # Mock discovery response
+            mock_discovery_response = MagicMock()
+            mock_discovery_response.json.return_value = mock_metadata
+            mock_discovery_response.raise_for_status = MagicMock()
+
+            # Mock token response
+            mock_token_response = MagicMock()
+            mock_token_response.status_code = 200
+            mock_token_response.json.return_value = new_token_data
+
+            mock_client.get = AsyncMock(return_value=mock_discovery_response)
+            mock_client.post = AsyncMock(return_value=mock_token_response)
             mock_client.__aenter__ = AsyncMock(return_value=mock_client)
             mock_client.__aexit__ = AsyncMock()
             mock_client_class.return_value = mock_client
@@ -171,6 +224,10 @@ class TestGranolaOAuthManager:
             # Verify refresh token preserved
             assert manager._token_data["refresh_token"] == "test_refresh_token"
             assert manager._token_data["access_token"] == "new_access_token"
+
+            # Verify resource indicator was included
+            call_args = mock_client.post.call_args
+            assert "resource" in call_args.kwargs["data"]
 
     @pytest.mark.asyncio
     async def test_refresh_token_missing_refresh_token(self, token_path):

@@ -1,13 +1,22 @@
-"""OAuth 2.0 manager for Granola MCP server authentication."""
+"""OAuth 2.1 manager for Granola MCP server authentication.
 
+Implements MCP-compliant OAuth flow with:
+- Authorization server discovery (RFC 9728)
+- PKCE (Proof Key for Code Exchange) - required by MCP spec
+- Resource indicators (RFC 8807)
+"""
+
+import base64
+import hashlib
 import json
 import logging
 import os
+import secrets
 import webbrowser
 from datetime import UTC, datetime, timedelta
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import parse_qs, urlencode, urlparse
 
 import httpx
 
@@ -15,18 +24,22 @@ logger = logging.getLogger(__name__)
 
 
 class GranolaOAuthManager:
-    """Manages OAuth 2.0 authentication for Granola MCP server.
+    """Manages OAuth 2.1 authentication for Granola MCP server.
 
-    Implements browser-based OAuth flow following the pattern established
-    by GoogleOAuthManager, but adapted for Granola's MCP server.
+    Implements MCP-compliant browser-based OAuth flow with:
+    - Authorization server discovery via RFC 9728
+    - PKCE (required by MCP specification)
+    - Resource indicators for token requests
     """
 
-    # OAuth configuration for Granola MCP
+    # MCP server configuration
     MCP_SERVER_URL = "https://mcp.granola.ai/mcp"
-    OAUTH_AUTHORIZE_URL = "https://mcp.granola.ai/oauth/authorize"
-    OAUTH_TOKEN_URL = "https://mcp.granola.ai/oauth/token"
+    WELL_KNOWN_URL = "https://mcp.granola.ai/.well-known/oauth-authorization-server"
     REDIRECT_URI = "http://localhost:8765/callback"
     SCOPES = ["meetings:read"]
+
+    # OAuth endpoints (discovered dynamically)
+    _oauth_metadata: dict | None = None
 
     def __init__(self, token_path: Path):
         """Initialize Granola OAuth manager.
@@ -37,11 +50,60 @@ class GranolaOAuthManager:
         self.token_path = Path(token_path)
         self._token_data: dict | None = None
 
-    async def authenticate(self) -> str:
-        """Run browser OAuth flow and return access token.
+    async def _discover_oauth_metadata(self) -> dict:
+        """Discover OAuth endpoints via RFC 9728.
 
-        Opens browser for user authorization, runs local callback server,
-        exchanges authorization code for access token, and saves token.
+        Returns:
+            OAuth metadata dict with endpoints
+
+        Raises:
+            RuntimeError: If discovery fails
+        """
+        if self._oauth_metadata:
+            return self._oauth_metadata
+
+        try:
+            async with httpx.AsyncClient() as client:
+                response = await client.get(self.WELL_KNOWN_URL, timeout=10.0)
+                response.raise_for_status()
+                self._oauth_metadata = response.json()
+
+                # Validate required fields
+                required = ["authorization_endpoint", "token_endpoint"]
+                for field in required:
+                    if field not in self._oauth_metadata:
+                        raise RuntimeError(f"OAuth metadata missing required field: {field}")
+
+                logger.debug(f"Discovered OAuth endpoints: {self._oauth_metadata}")
+                return self._oauth_metadata
+
+        except httpx.HTTPError as e:
+            raise RuntimeError(
+                f"Failed to discover OAuth endpoints at {self.WELL_KNOWN_URL}: {e}"
+            ) from e
+
+    def _generate_pkce_pair(self) -> tuple[str, str]:
+        """Generate PKCE code verifier and challenge.
+
+        Returns:
+            Tuple of (code_verifier, code_challenge)
+        """
+        # Generate random code verifier (43-128 chars)
+        code_verifier = base64.urlsafe_b64encode(secrets.token_bytes(32)).decode('utf-8').rstrip('=')
+
+        # Generate code challenge (SHA256 hash of verifier)
+        challenge_bytes = hashlib.sha256(code_verifier.encode('utf-8')).digest()
+        code_challenge = base64.urlsafe_b64encode(challenge_bytes).decode('utf-8').rstrip('=')
+
+        return code_verifier, code_challenge
+
+    async def authenticate(self) -> str:
+        """Run MCP-compliant browser OAuth flow with PKCE.
+
+        Implements:
+        - Authorization server discovery (RFC 9728)
+        - PKCE (required by MCP spec)
+        - Resource indicators (RFC 8807)
 
         Returns:
             Access token for MCP API calls
@@ -50,7 +112,15 @@ class GranolaOAuthManager:
             RuntimeError: If OAuth flow fails
         """
         try:
-            logger.info("Starting Granola OAuth authentication flow")
+            logger.info("Starting MCP-compliant OAuth authentication flow")
+
+            # Discover OAuth endpoints
+            metadata = await self._discover_oauth_metadata()
+            auth_endpoint = metadata["authorization_endpoint"]
+            token_endpoint = metadata["token_endpoint"]
+
+            # Generate PKCE pair
+            code_verifier, code_challenge = self._generate_pkce_pair()
 
             # Reset class variable before starting
             OAuthCallbackServer.auth_code = None
@@ -60,13 +130,15 @@ class GranolaOAuthManager:
             server = HTTPServer(("localhost", server_port), OAuthCallbackServer)
             logger.debug(f"Started local OAuth callback server on port {server_port}")
 
-            # Build authorization URL
-            auth_url = (
-                f"{self.OAUTH_AUTHORIZE_URL}"
-                f"?response_type=code"
-                f"&redirect_uri={self.REDIRECT_URI}"
-                f"&scope={'+'.join(self.SCOPES)}"
-            )
+            # Build authorization URL with PKCE
+            auth_params = {
+                "response_type": "code",
+                "redirect_uri": self.REDIRECT_URI,
+                "scope": " ".join(self.SCOPES),
+                "code_challenge": code_challenge,
+                "code_challenge_method": "S256",
+            }
+            auth_url = f"{auth_endpoint}?{urlencode(auth_params)}"
 
             # Open browser for authorization
             logger.info("Opening browser for Granola authorization...")
@@ -84,15 +156,19 @@ class GranolaOAuthManager:
             auth_code = OAuthCallbackServer.auth_code
             logger.debug("Received authorization code")
 
-            # Exchange code for token
+            # Exchange code for token with PKCE verifier and resource indicator
             async with httpx.AsyncClient() as client:
+                token_data = {
+                    "grant_type": "authorization_code",
+                    "code": auth_code,
+                    "redirect_uri": self.REDIRECT_URI,
+                    "code_verifier": code_verifier,
+                    "resource": self.MCP_SERVER_URL,  # RFC 8807 resource indicator
+                }
+
                 response = await client.post(
-                    self.OAUTH_TOKEN_URL,
-                    data={
-                        "grant_type": "authorization_code",
-                        "code": auth_code,
-                        "redirect_uri": self.REDIRECT_URI,
-                    },
+                    token_endpoint,
+                    data=token_data,
                     headers={"Accept": "application/json"},
                 )
 
@@ -101,13 +177,13 @@ class GranolaOAuthManager:
                         f"Token exchange failed: {response.status_code} {response.text}"
                     )
 
-                token_data = response.json()
+                token_response = response.json()
 
             # Save token with secure permissions
-            self._save_token(token_data)
+            self._save_token(token_response)
 
-            logger.info("Successfully authenticated with Granola MCP server")
-            return token_data["access_token"]
+            logger.info("Successfully authenticated with Granola MCP server (OAuth 2.1 + PKCE)")
+            return token_response["access_token"]
 
         except Exception as e:
             logger.error(f"OAuth authentication failed: {e}")
@@ -149,6 +225,8 @@ class GranolaOAuthManager:
     async def _refresh_token(self) -> None:
         """Refresh expired access token using refresh token.
 
+        Uses resource indicator as required by MCP spec.
+
         Raises:
             RuntimeError: If refresh fails
         """
@@ -159,12 +237,17 @@ class GranolaOAuthManager:
             )
 
         try:
+            # Discover token endpoint
+            metadata = await self._discover_oauth_metadata()
+            token_endpoint = metadata["token_endpoint"]
+
             async with httpx.AsyncClient() as client:
                 response = await client.post(
-                    self.OAUTH_TOKEN_URL,
+                    token_endpoint,
                     data={
                         "grant_type": "refresh_token",
                         "refresh_token": self._token_data["refresh_token"],
+                        "resource": self.MCP_SERVER_URL,  # RFC 8807 resource indicator
                     },
                     headers={"Accept": "application/json"},
                 )
