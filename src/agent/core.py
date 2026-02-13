@@ -334,9 +334,15 @@ class AutonomousAgent:
                 if item.source:
                     items_by_integration[item.source].append(item)
 
-            # Process each integration's items
-            for integration_type, items in items_by_integration.items():
+            # Get all registered integration types to ensure we report on all of them
+            registered_integrations = set()
+            for key in self.integration_manager.integrations.keys():
+                registered_integrations.add(key.type)
+
+            # Process each integration (including those with 0 items)
+            for integration_type in registered_integrations:
                 start_time = time.time()
+                items = items_by_integration.get(integration_type, [])
 
                 result = PollResult(
                     integration=integration_type,
