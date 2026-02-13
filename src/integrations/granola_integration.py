@@ -325,7 +325,7 @@ class GranolaIntegration(BaseIntegration):
         return ActionableItem(
             type=ActionableItemType.DOCUMENT_REVIEW,
             title=f"Review meeting: {title}",
-            description=content[:1000],  # Limit length for LLM context
+            description=content[:8000],  # Limit to 8000 chars (allows full notes with action items)
             source=IntegrationType.GRANOLA,
             source_reference=meeting["id"],
             due_date=None,
