@@ -231,6 +231,7 @@ class TaskMenuApp(NSObject):
                 task_id = task.get("id", "?")
                 title = task.get("title", "Untitled")
                 priority = task.get("priority", "medium")
+                document_links = task.get("document_links", [])
 
                 # Normalize priority to uppercase for symbol lookup
                 if isinstance(priority, str):
@@ -238,9 +239,10 @@ class TaskMenuApp(NSObject):
                 else:
                     priority = str(priority).upper()
 
-                # Format: Priority indicator + Title
+                # Format: Priority indicator + Title + Link indicator (if has links)
                 priority_symbol = self._get_priority_symbol(priority)
-                menu_title = f"{priority_symbol} {title}"
+                link_indicator = " 🔗" if document_links else ""
+                menu_title = f"{priority_symbol} {title}{link_indicator}"
 
                 item = NSMenuItem.alloc().initWithTitle_action_keyEquivalent_(
                     menu_title, None, ""
@@ -346,9 +348,9 @@ class TaskMenuApp(NSObject):
         Args:
             sender: Menu item (unused)
         """
-        import subprocess
+        import webbrowser
 
-        subprocess.Popen(["open", f"{self.api_url}/docs"])
+        webbrowser.open(f"{self.api_url}/docs")
 
     def task_item_clicked(self, sender: Any = None) -> None:
         """Handle task menu item click.

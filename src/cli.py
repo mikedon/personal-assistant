@@ -572,10 +572,11 @@ def tasks():
 @click.option("--priority", "-p", type=click.Choice([p.value for p in TaskPriority]),
               help="Filter by priority")
 @click.option("--account", "-a", "account_id", help="Filter by source account ID")
+@click.option("--link", "-l", help="Filter by document link URL")
 @click.option("--initiative", "-i", type=int, help="Filter by initiative ID")
 @click.option("--all", "show_all", is_flag=True, help="Include completed tasks")
 @click.option("--limit", "-n", default=20, help="Number of tasks to show")
-def tasks_list(status, priority, account_id, initiative, show_all, limit):
+def tasks_list(status, priority, account_id, link, initiative, show_all, limit):
     """List tasks."""
     with get_db_session() as db:
         service = TaskService(db)
@@ -588,6 +589,7 @@ def tasks_list(status, priority, account_id, initiative, show_all, limit):
             status=status_filter,
             priority=priority_filter,
             account_id=account_id,
+            document_links=[link] if link else None,
             include_completed=show_all,
             limit=limit,
         )
@@ -608,6 +610,7 @@ def tasks_list(status, priority, account_id, initiative, show_all, limit):
         table.add_column("Status", width=12)
         table.add_column("Due", width=15)
         table.add_column("Initiative", style="cyan", width=15)
+        table.add_column("Links", style="cyan", width=5)
 
         for task in tasks:
             pri_style = get_priority_style(task.priority)
@@ -618,6 +621,7 @@ def tasks_list(status, priority, account_id, initiative, show_all, limit):
 
             title_text = task.title[:40] if task.title else "(no title)"
             initiative_text = task.initiative.title[:15] if task.initiative else "-"
+            link_icon = "🔗" if task.get_document_links_list() else ""
             table.add_row(
                 str(task.id),
                 pri_emoji,
@@ -625,6 +629,7 @@ def tasks_list(status, priority, account_id, initiative, show_all, limit):
                 Text(task.status.value, style=status_style),
                 format_due_date(task.due_date),
                 initiative_text,
+                link_icon,
             )
 
         console.print(table)
@@ -637,8 +642,9 @@ def tasks_list(status, priority, account_id, initiative, show_all, limit):
               default="medium", help="Priority level")
 @click.option("--due", "-D", help="Due date (YYYY-MM-DD or 'tomorrow', '+3d')")
 @click.option("--tags", "-t", multiple=True, help="Tags (can specify multiple)")
+@click.option("--link", "-l", multiple=True, help="Document link URL (can specify multiple)")
 @click.option("--initiative", "-i", type=int, help="Link to initiative by ID")
-def tasks_add(title, description, priority, due, tags, initiative):
+def tasks_add(title, description, priority, due, tags, link, initiative):
     """Add a new task."""
     # Parse due date
     due_date = None
@@ -665,12 +671,17 @@ def tasks_add(title, description, priority, due, tags, initiative):
             source=TaskSource.MANUAL,
             due_date=due_date,
             tags=list(tags) if tags else None,
+            document_links=list(link) if link else None,
             initiative_id=initiative,
         )
 
         console.print(f"[green]✓[/green] Created task #{task.id}: {task.title}")
         if task.initiative:
             console.print(f"  [cyan]Initiative:[/cyan] {task.initiative.title}")
+        if task.document_links:
+            console.print(f"  [cyan]Document Links:[/cyan]")
+            for doc_link in task.get_document_links_list():
+                console.print(f"    • {doc_link}")
 
 
 @tasks.command("complete")
@@ -710,6 +721,71 @@ def tasks_delete(task_id, yes):
         console.print(f"[green]✓[/green] Deleted task #{task_id}")
 
 
+@tasks.command("link-add")
+@click.argument("task_id", type=int)
+@click.argument("url")
+def tasks_link_add(task_id, url):
+    """Add a document link to a task."""
+    # Validate URL format
+    import urllib.parse
+
+    try:
+        parsed = urllib.parse.urlparse(url)
+        if not all([parsed.scheme, parsed.netloc]):
+            console.print(f"[red]Invalid URL format: {url}[/red]")
+            console.print("[yellow]URL must include scheme and domain (e.g., https://example.com)[/yellow]")
+            return
+
+        if parsed.scheme not in ['http', 'https']:
+            console.print(f"[red]Only http:// and https:// URLs are allowed[/red]")
+            console.print(f"[yellow]Got: {parsed.scheme}://[/yellow]")
+            return
+    except Exception as e:
+        console.print(f"[red]Invalid URL: {e}[/red]")
+        return
+
+    with get_db_session() as db:
+        service = TaskService(db)
+        task = service.get_task(task_id)
+
+        if not task:
+            console.print(f"[red]Task #{task_id} not found.[/red]")
+            return
+
+        links = task.get_document_links_list()
+        if url in links:
+            console.print(f"[yellow]Link already exists on task #{task_id}[/yellow]")
+            return
+
+        links.append(url)
+        service.update_task(task, document_links=links)
+        console.print(f"[green]✓[/green] Added link to task #{task_id}")
+        console.print(f"  {url}")
+
+
+@tasks.command("link-remove")
+@click.argument("task_id", type=int)
+@click.argument("url")
+def tasks_link_remove(task_id, url):
+    """Remove a document link from a task."""
+    with get_db_session() as db:
+        service = TaskService(db)
+        task = service.get_task(task_id)
+
+        if not task:
+            console.print(f"[red]Task #{task_id} not found.[/red]")
+            return
+
+        links = task.get_document_links_list()
+        if url not in links:
+            console.print(f"[yellow]Link not found on task #{task_id}[/yellow]")
+            return
+
+        links.remove(url)
+        service.update_task(task, document_links=links)
+        console.print(f"[green]✓[/green] Removed link from task #{task_id}")
+
+
 @tasks.command("show")
 @click.argument("task_id", type=int)
 def tasks_show(task_id):
@@ -744,6 +820,13 @@ def tasks_show(task_id):
         tags = task.get_tags_list()
         if tags:
             info_lines.append(f"Tags: {', '.join(tags)}")
+
+        doc_links = task.get_document_links_list()
+        if doc_links:
+            info_lines.append("")
+            info_lines.append("[bold cyan]Document Links:[/bold cyan]")
+            for link in doc_links:
+                info_lines.append(f"  • {link}")
 
         info_lines.extend([
             "",

@@ -137,6 +137,60 @@ class TestTaskServiceOperations:
         assert task.priority_score > 0
         assert "test" in task.get_tags_list()
 
+    def test_create_task_with_document_links(self, test_db_session):
+        """Test creating a task with document links."""
+        service = TaskService(test_db_session)
+        links = ["https://docs.google.com/doc1", "https://example.com/doc2"]
+
+        task = service.create_task(
+            title="Task with Links",
+            document_links=links,
+        )
+
+        assert task.id is not None
+        assert task.get_document_links_list() == links
+
+    def test_update_task_document_links(self, test_db_session):
+        """Test updating task document links."""
+        service = TaskService(test_db_session)
+        task = service.create_task(title="Task")
+
+        # Add links
+        links = ["https://docs.google.com/doc1"]
+        updated = service.update_task(task, document_links=links)
+
+        assert updated.get_document_links_list() == links
+
+        # Update links
+        new_links = ["https://example.com/doc2", "https://notion.so/page"]
+        updated = service.update_task(task, document_links=new_links)
+
+        assert updated.get_document_links_list() == new_links
+
+    def test_filter_tasks_by_document_link(self, test_db_session):
+        """Test filtering tasks by document link."""
+        service = TaskService(test_db_session)
+
+        # Create tasks with different links
+        service.create_task(
+            title="Task 1",
+            document_links=["https://docs.google.com/doc1"],
+        )
+        service.create_task(
+            title="Task 2",
+            document_links=["https://example.com/doc2"],
+        )
+        service.create_task(
+            title="Task 3",
+            document_links=["https://docs.google.com/doc3"],
+        )
+
+        # Filter by Google Docs
+        tasks, total = service.get_tasks(document_links=["docs.google.com"])
+
+        assert total == 2
+        assert all("docs.google.com" in link for task in tasks for link in task.get_document_links_list())
+
     def test_get_task(self, test_db_session):
         """Test getting a task by ID."""
         service = TaskService(test_db_session)

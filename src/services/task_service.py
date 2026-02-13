@@ -38,6 +38,7 @@ class TaskService:
         source: TaskSource | None = None,
         account_id: str | None = None,
         tags: list[str] | None = None,
+        document_links: list[str] | None = None,
         search: str | None = None,
         due_before: datetime | None = None,
         due_after: datetime | None = None,
@@ -83,6 +84,11 @@ class TaskService:
         if tags:
             tag_conditions = [Task.tags.contains(tag) for tag in tags]
             query = query.filter(or_(*tag_conditions))
+
+        # Document links filter (matches any of the provided links)
+        if document_links:
+            link_conditions = [Task.document_links.contains(link) for link in document_links]
+            query = query.filter(or_(*link_conditions))
 
         # Search in title and description
         if search:
@@ -168,6 +174,7 @@ class TaskService:
         account_id: str | None = None,
         due_date: datetime | None = None,
         tags: list[str] | None = None,
+        document_links: list[str] | None = None,
         initiative_id: int | None = None,
     ) -> Task:
         """Create a new task with calculated priority score.
@@ -181,6 +188,7 @@ class TaskService:
             account_id: Account identifier (validated before any DB operations)
             due_date: Task due date
             tags: List of tags
+            document_links: List of document URLs
             initiative_id: Associated initiative ID
 
         Returns:
@@ -205,6 +213,8 @@ class TaskService:
         )
         if tags:
             task.set_tags_list(tags)
+        if document_links:
+            task.set_document_links_list(document_links)
 
         task.priority_score = self.calculate_priority_score(task)
 
@@ -265,6 +275,7 @@ class TaskService:
         priority: TaskPriority | None = None,
         due_date: datetime | None = None,
         tags: list[str] | None = None,
+        document_links: list[str] | None = None,
         initiative_id: int | None = None,
         clear_initiative: bool = False,
     ) -> Task:
@@ -278,6 +289,7 @@ class TaskService:
             priority: New priority
             due_date: New due date
             tags: New tags list
+            document_links: New document links list
             initiative_id: Initiative to link task to
             clear_initiative: If True, unlink task from any initiative
         """
@@ -295,6 +307,8 @@ class TaskService:
             task.due_date = due_date
         if tags is not None:
             task.set_tags_list(tags)
+        if document_links is not None:
+            task.set_document_links_list(document_links)
         if clear_initiative:
             task.initiative_id = None
         elif initiative_id is not None:

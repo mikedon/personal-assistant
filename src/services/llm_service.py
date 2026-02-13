@@ -42,6 +42,7 @@ class ExtractedTask:
     tags: list[str] | None = None
     confidence: float = 0.5  # 0.0 to 1.0
     suggested_initiative_id: int | None = None  # Suggested initiative to link to
+    document_links: list[str] | None = None  # Extracted URLs from the text
 
 
 @dataclass
@@ -224,6 +225,7 @@ For each task, determine:
 - tags: Relevant tags for categorization
 - confidence: Your confidence in this being a real task (0.0 to 1.0)
 - suggested_initiative_id: (optional) If this task relates to one of the available initiatives, include its ID. Otherwise omit this field.
+- document_links: (optional) Array of relevant URLs found in the text (Google Docs, Notion, GitHub, Confluence, Jira, etc.). Extract URLs that are directly related to the task.
 
 Return a JSON array of tasks. If no actionable tasks are found, return an empty array [].
 
@@ -236,7 +238,7 @@ Priority guidelines:
 IMPORTANT: All due dates must be in the future. If someone says "this Sunday" and today is {weekday}, calculate the next upcoming Sunday.{initiatives_context}
 
 Example output:
-[{{"title": "Review PR #123", "description": "Code review requested by John", "priority": "high", "due_date": "2026-01-29T17:00:00", "tags": ["code-review", "engineering"], "confidence": 0.9}}]"""
+[{{"title": "Review PR #123", "description": "Code review requested by John", "priority": "high", "due_date": "2026-01-29T17:00:00", "tags": ["code-review", "engineering"], "confidence": 0.9, "document_links": ["https://github.com/org/repo/pull/123"]}}]"""
 
         user_prompt = f"""Source: {source}
 {f"Context: {context}" if context else ""}
@@ -278,6 +280,11 @@ Extract all actionable tasks as JSON:"""
                         except (ValueError, TypeError):
                             pass
 
+                    # Extract document links
+                    document_links = task_data.get("document_links")
+                    if document_links and not isinstance(document_links, list):
+                        document_links = None
+
                     tasks.append(
                         ExtractedTask(
                             title=task_data.get("title", "Untitled Task")[:500],
@@ -287,6 +294,7 @@ Extract all actionable tasks as JSON:"""
                             tags=task_data.get("tags", []),
                             confidence=float(task_data.get("confidence", 0.5)),
                             suggested_initiative_id=suggested_initiative_id,
+                            document_links=document_links,
                         )
                     )
                 except (KeyError, TypeError) as e:

@@ -28,6 +28,7 @@ class TodayDueTaskResponse(BaseModel):
     due_date: datetime | None
     status: TaskStatus
     priority_score: float
+    document_links: list[str] = Field(default_factory=list)
 
 
 class TodayDueResponse(BaseModel):
@@ -92,6 +93,7 @@ def get_today_due_tasks(
                 due_date=t.due_date,
                 status=t.status,
                 priority_score=t.priority_score,
+                document_links=t.get_document_links_list(),
             )
             for t in all_tasks
         ],

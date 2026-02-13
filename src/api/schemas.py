@@ -2,7 +2,7 @@
 
 from datetime import datetime
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, HttpUrl, field_validator
 
 from src.models.initiative import InitiativePriority, InitiativeStatus
 from src.models.task import TaskPriority, TaskSource, TaskStatus
@@ -17,6 +17,39 @@ class TaskBase(BaseModel):
     priority: TaskPriority = TaskPriority.MEDIUM
     due_date: datetime | None = None
     tags: list[str] = Field(default_factory=list)
+    document_links: list[HttpUrl] = Field(
+        default_factory=list,
+        description="External document URLs (HTTP/HTTPS only)",
+        max_length=20
+    )
+
+    @field_validator('document_links')
+    @classmethod
+    def validate_document_links(cls, v):
+        """Validate document links: protocol whitelist, length limits."""
+        if not v:
+            return v
+
+        # Check max count
+        if len(v) > 20:
+            raise ValueError("Maximum 20 document links allowed per task")
+
+        # Validate each URL
+        for url in v:
+            # HttpUrl already validates format, but check protocol
+            if url.scheme not in ['http', 'https']:
+                raise ValueError(f"Only http/https URLs allowed, got: {url.scheme}")
+
+        # Check total serialized length (after JSON encoding)
+        import json
+        serialized = json.dumps([str(url) for url in v])
+        if len(serialized) > 5000:
+            raise ValueError(
+                f"Total document links length ({len(serialized)} chars) exceeds "
+                f"limit (5000 chars). Please reduce number or length of URLs."
+            )
+
+        return v
 
 
 class TaskCreate(TaskBase):
@@ -36,24 +69,63 @@ class TaskUpdate(BaseModel):
     priority: TaskPriority | None = None
     due_date: datetime | None = None
     tags: list[str] | None = None
+    document_links: list[HttpUrl] | None = None
     initiative_id: int | None = None
     clear_initiative: bool = False
 
+    @field_validator('document_links')
+    @classmethod
+    def validate_document_links(cls, v):
+        """Validate document links: protocol whitelist, length limits."""
+        if v is None:
+            return v
 
-class TaskResponse(TaskBase):
-    """Schema for task response."""
+        # Check max count
+        if len(v) > 20:
+            raise ValueError("Maximum 20 document links allowed per task")
+
+        # Validate each URL
+        for url in v:
+            # HttpUrl already validates format, but check protocol
+            if url.scheme not in ['http', 'https']:
+                raise ValueError(f"Only http/https URLs allowed, got: {url.scheme}")
+
+        # Check total serialized length
+        import json
+        serialized = json.dumps([str(url) for url in v])
+        if len(serialized) > 5000:
+            raise ValueError(
+                f"Total document links length ({len(serialized)} chars) exceeds "
+                f"limit (5000 chars). Please reduce number or length of URLs."
+            )
+
+        return v
+
+
+class TaskResponse(BaseModel):
+    """Schema for task response.
+
+    Note: Inherits from BaseModel (not TaskBase) to avoid HttpUrl validation
+    on output. Input validation happens in TaskCreate/TaskUpdate.
+    """
 
     model_config = ConfigDict(from_attributes=True)
 
     id: int
+    title: str
+    description: str | None
     status: TaskStatus
+    priority: TaskPriority
     source: TaskSource
     source_reference: str | None
     account_id: str | None
     priority_score: float
+    due_date: datetime | None
     created_at: datetime
     updated_at: datetime
     completed_at: datetime | None
+    tags: list[str]
+    document_links: list[str]  # Plain strings on output (already validated on input)
     initiative_id: int | None = None
     initiative_title: str | None = None
 
