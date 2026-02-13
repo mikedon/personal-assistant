@@ -846,6 +846,67 @@ class TestTasksParseCommand:
             call_kwargs = mock_service.create_task.call_args[1]
             assert call_kwargs["initiative_id"] == 5
 
+    @patch("src.cli.init_db")
+    @patch("src.cli.load_config")
+    @patch("src.cli.get_config")
+    @patch("src.cli.get_db_session")
+    def test_tasks_parse_extracts_document_links(self, mock_session, mock_get_config, mock_load_config, mock_init_db, runner, mock_config, mock_task):
+        """Test tasks parse extracts and passes document links to task creation."""
+        mock_load_config.return_value = mock_config
+        mock_get_config.return_value = mock_config
+
+        mock_db = MagicMock()
+        mock_session.return_value.__enter__ = MagicMock(return_value=mock_db)
+        mock_session.return_value.__exit__ = MagicMock(return_value=False)
+
+        from src.services.llm_service import ExtractedTask
+        from datetime import datetime, timedelta
+
+        # Create extracted task with document links
+        doc_url = "https://docs.google.com/document/d/1Pa-jDC3hUBqgphmhf5xjVVEQSCWLrhf2ymf1Bm_RDJc/edit"
+        extracted = ExtractedTask(
+            title="Complete the cloud team offsite request",
+            description="Review and finalize the offsite planning document",
+            priority="medium",
+            due_date=datetime.now() + timedelta(days=5),
+            tags=["team", "offsite"],
+            confidence=0.85,
+            document_links=[doc_url],  # Include document link
+        )
+
+        with patch("src.cli.TaskService") as mock_service_class, \
+             patch("src.cli.InitiativeService") as mock_initiative_class, \
+             patch("src.services.llm_service.LLMService") as mock_llm_class:
+            mock_service = MagicMock()
+            mock_service.create_task.return_value = mock_task
+            mock_service_class.return_value = mock_service
+
+            # Mock initiative service (no active initiatives for this test)
+            mock_initiative = MagicMock()
+            mock_initiative.get_active_initiatives.return_value = []
+            mock_initiative_class.return_value = mock_initiative
+
+            # Mock LLM to return extracted task with document links
+            mock_llm = MagicMock()
+            mock_llm.extract_tasks_from_text = AsyncMock(return_value=[extracted])
+            mock_llm_class.return_value = mock_llm
+
+            # Use --yes to skip confirmation
+            result = runner.invoke(cli, [
+                "tasks", "parse",
+                f"due Monday: complete the cloud team offsite request {doc_url}",
+                "--yes"
+            ])
+
+            assert result.exit_code == 0
+            assert "Created task" in result.output
+
+            # CRITICAL: Verify document_links were passed to create_task
+            mock_service.create_task.assert_called_once()
+            call_kwargs = mock_service.create_task.call_args[1]
+            assert "document_links" in call_kwargs, "document_links parameter is missing from create_task call"
+            assert call_kwargs["document_links"] == [doc_url], f"Expected document_links={[doc_url]}, got {call_kwargs.get('document_links')}"
+
 
 class TestTasksDueCommand:
     """Tests for the tasks due command."""
