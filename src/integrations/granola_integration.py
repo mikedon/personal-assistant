@@ -197,10 +197,14 @@ class GranolaIntegration(BaseIntegration):
             raise PollError(f"Unexpected error polling Granola: {e}") from e
 
     def _parse_date(self, date_str: str) -> datetime:
-        """Parse ISO date string to datetime.
+        """Parse date string to datetime.
+
+        Handles multiple formats:
+        - ISO format: "2026-02-12T20:30:00Z"
+        - Human-readable: "Feb 12, 2026 8:30 PM"
 
         Args:
-            date_str: ISO format date string
+            date_str: Date string in various formats
 
         Returns:
             Datetime object (UTC)
@@ -209,10 +213,23 @@ class GranolaIntegration(BaseIntegration):
             return datetime.min.replace(tzinfo=UTC)
 
         try:
-            # Handle both Z and +00:00 timezone formats
+            # Try ISO format first (most common/fastest)
             normalized = date_str.replace("Z", "+00:00")
-            return datetime.fromisoformat(normalized)
+            dt = datetime.fromisoformat(normalized)
+            # Ensure UTC
+            if dt.tzinfo is None:
+                dt = dt.replace(tzinfo=UTC)
+            return dt
         except (ValueError, AttributeError):
+            pass
+
+        try:
+            # Try parsing Granola's human-readable format: "Feb 12, 2026 8:30 PM"
+            dt = datetime.strptime(date_str, "%b %d, %Y %I:%M %p")
+            # Add UTC timezone
+            dt = dt.replace(tzinfo=UTC)
+            return dt
+        except ValueError:
             logger.warning(f"Failed to parse date: {date_str}")
             return datetime.min.replace(tzinfo=UTC)
 
