@@ -616,6 +616,62 @@ def accounts_authenticate(account_type: str, account_id: str):
         console.print("[yellow]Supported account types: google, granola[/yellow]")
 
 
+@accounts.command("granola-notes")
+@click.option("--limit", "-n", default=20, help="Number of notes to show")
+@click.option("--workspace", "-w", help="Filter by workspace ID")
+def accounts_granola_notes(limit: int, workspace: str | None):
+    """Show processed Granola meeting notes.
+
+    Displays which Granola meetings have been processed for actionable items.
+
+    Examples:
+        pa accounts granola-notes
+        pa accounts granola-notes --limit 50
+        pa accounts granola-notes --workspace all
+    """
+    from src.models import ProcessedGranolaNote
+
+    with get_db_session() as db:
+        query = db.query(ProcessedGranolaNote).order_by(
+            ProcessedGranolaNote.processed_at.desc()
+        )
+
+        if workspace:
+            query = query.filter(ProcessedGranolaNote.workspace_id == workspace)
+
+        notes = query.limit(limit).all()
+
+        if not notes:
+            console.print("[yellow]No Granola notes have been processed yet.[/yellow]")
+            return
+
+        table = Table(title=f"Processed Granola Meeting Notes (showing {len(notes)})")
+        table.add_column("Title", style="cyan", no_wrap=False, max_width=40)
+        table.add_column("Workspace", style="green")
+        table.add_column("Meeting Date", style="blue")
+        table.add_column("Processed", style="magenta")
+        table.add_column("Tasks", style="yellow", justify="right")
+
+        for note in notes:
+            meeting_date = note.note_created_at.strftime("%b %d, %Y %I:%M %p")
+            processed_date = note.processed_at.strftime("%b %d %I:%M %p")
+
+            table.add_row(
+                note.note_title[:40],
+                note.workspace_id,
+                meeting_date,
+                processed_date,
+                str(note.tasks_created_count),
+            )
+
+        console.print(table)
+        console.print(f"\n[dim]Total processed notes: {len(notes)}[/dim]")
+
+        # Show summary stats
+        total_tasks = sum(note.tasks_created_count for note in notes)
+        console.print(f"[dim]Total tasks created: {total_tasks}[/dim]")
+
+
 # --- Task Commands ---
 
 
