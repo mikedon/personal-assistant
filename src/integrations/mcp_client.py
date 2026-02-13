@@ -212,8 +212,13 @@ class MCPClient:
 
             # Extract notes/content if requested
             if include_content:
+                # Try <summary> tag first (newer format), then <notes> (legacy)
+                summary_match = re.search(r'<summary>(.*?)</summary>', content, re.DOTALL)
                 notes_match = re.search(r'<notes>(.*?)</notes>', content, re.DOTALL)
-                if notes_match:
+
+                if summary_match:
+                    meeting["content"] = summary_match.group(1).strip()
+                elif notes_match:
                     meeting["content"] = notes_match.group(1).strip()
                 else:
                     meeting["content"] = ""
