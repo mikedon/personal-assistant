@@ -672,6 +672,163 @@ def accounts_granola_notes(limit: int, workspace: str | None):
         console.print(f"[dim]Total tasks created: {total_tasks}[/dim]")
 
 
+@accounts.command("granola-reprocess")
+@click.argument("search", required=False)
+@click.option("--id", "meeting_id", help="Meeting ID to reprocess")
+@click.option("--title", help="Search for meeting by title")
+@click.option("--all", "reprocess_all", is_flag=True, help="Reprocess all meetings")
+def accounts_granola_reprocess(search: str | None, meeting_id: str | None, title: str | None, reprocess_all: bool):
+    """Mark Granola meeting(s) for reprocessing.
+
+    Removes meeting(s) from the processed list so they will be picked up
+    on the next agent poll and reprocessed for action items.
+
+    Examples:
+        pa accounts granola-reprocess --id 4e4d36e7-a98c-4ab6-a8b1-6431d9fbffdd
+        pa accounts granola-reprocess --title "Docker desktop"
+        pa accounts granola-reprocess "Roberta"
+        pa accounts granola-reprocess --all
+    """
+    from src.models import ProcessedGranolaNote
+
+    with get_db_session() as db:
+        # Build query
+        if reprocess_all:
+            # Confirm before deleting all
+            count = db.query(ProcessedGranolaNote).count()
+            if count == 0:
+                console.print("[yellow]No processed meetings found.[/yellow]")
+                return
+
+            console.print(f"[yellow]⚠️  This will mark {count} meeting(s) for reprocessing.[/yellow]")
+            confirm = click.confirm("Are you sure?", default=False)
+            if not confirm:
+                console.print("[dim]Cancelled.[/dim]")
+                return
+
+            db.query(ProcessedGranolaNote).delete()
+            db.commit()
+            console.print(f"[green]✓ Marked {count} meeting(s) for reprocessing.[/green]")
+            console.print("[dim]Run 'pa agent poll' to reprocess meetings.[/dim]")
+            return
+
+        # Find by meeting ID
+        if meeting_id:
+            note = db.query(ProcessedGranolaNote).filter(
+                ProcessedGranolaNote.note_id == meeting_id
+            ).first()
+
+            if not note:
+                console.print(f"[red]✗ No processed meeting found with ID: {meeting_id}[/red]")
+                return
+
+            console.print(f"[cyan]Meeting:[/cyan] {note.note_title}")
+            console.print(f"[dim]ID: {note.note_id}[/dim]")
+            console.print(f"[dim]Processed: {note.processed_at.strftime('%b %d, %Y %I:%M %p')}[/dim]")
+            console.print(f"[dim]Tasks created: {note.tasks_created_count}[/dim]")
+
+            confirm = click.confirm("\nMark this meeting for reprocessing?", default=True)
+            if not confirm:
+                console.print("[dim]Cancelled.[/dim]")
+                return
+
+            db.delete(note)
+            db.commit()
+            console.print("[green]✓ Meeting marked for reprocessing.[/green]")
+            console.print("[dim]Run 'pa agent poll' to reprocess.[/dim]")
+            return
+
+        # Find by title search (either --title or positional argument)
+        search_term = title or search
+        if not search_term:
+            console.print("[red]✗ Please provide a search term, --id, --title, or --all[/red]")
+            console.print("[dim]Example: pa accounts granola-reprocess 'Docker desktop'[/dim]")
+            return
+
+        # Search for matching meetings
+        notes = db.query(ProcessedGranolaNote).filter(
+            ProcessedGranolaNote.note_title.ilike(f"%{search_term}%")
+        ).order_by(ProcessedGranolaNote.processed_at.desc()).all()
+
+        if not notes:
+            console.print(f"[yellow]No processed meetings found matching: {search_term}[/yellow]")
+            return
+
+        if len(notes) == 1:
+            # Single match - show details and confirm
+            note = notes[0]
+            console.print(f"[cyan]Found:[/cyan] {note.note_title}")
+            console.print(f"[dim]ID: {note.note_id}[/dim]")
+            console.print(f"[dim]Processed: {note.processed_at.strftime('%b %d, %Y %I:%M %p')}[/dim]")
+            console.print(f"[dim]Tasks created: {note.tasks_created_count}[/dim]")
+
+            confirm = click.confirm("\nMark this meeting for reprocessing?", default=True)
+            if not confirm:
+                console.print("[dim]Cancelled.[/dim]")
+                return
+
+            db.delete(note)
+            db.commit()
+            console.print("[green]✓ Meeting marked for reprocessing.[/green]")
+            console.print("[dim]Run 'pa agent poll' to reprocess.[/dim]")
+        else:
+            # Multiple matches - show list and let user choose
+            console.print(f"[cyan]Found {len(notes)} matching meetings:[/cyan]\n")
+
+            table = Table(show_header=True, header_style="bold")
+            table.add_column("#", style="dim", width=3)
+            table.add_column("Title", style="cyan", no_wrap=False)
+            table.add_column("Date", style="blue")
+            table.add_column("Tasks", style="yellow", justify="right")
+
+            for i, note in enumerate(notes, 1):
+                meeting_date = note.note_created_at.strftime("%b %d, %Y")
+                table.add_row(
+                    str(i),
+                    note.note_title[:60],
+                    meeting_date,
+                    str(note.tasks_created_count),
+                )
+
+            console.print(table)
+
+            # Ask user to choose
+            console.print("\n[dim]Enter number to reprocess, 'all' for all matches, or 'cancel' to abort:[/dim]")
+            choice = click.prompt("Choice", type=str, default="cancel")
+
+            if choice.lower() == "cancel":
+                console.print("[dim]Cancelled.[/dim]")
+                return
+
+            if choice.lower() == "all":
+                confirm = click.confirm(f"Mark all {len(notes)} meeting(s) for reprocessing?", default=False)
+                if not confirm:
+                    console.print("[dim]Cancelled.[/dim]")
+                    return
+
+                for note in notes:
+                    db.delete(note)
+                db.commit()
+                console.print(f"[green]✓ Marked {len(notes)} meeting(s) for reprocessing.[/green]")
+                console.print("[dim]Run 'pa agent poll' to reprocess.[/dim]")
+                return
+
+            # Single choice by number
+            try:
+                idx = int(choice) - 1
+                if idx < 0 or idx >= len(notes):
+                    console.print("[red]✗ Invalid choice.[/red]")
+                    return
+
+                note = notes[idx]
+                db.delete(note)
+                db.commit()
+                console.print(f"[green]✓ Meeting '{note.note_title}' marked for reprocessing.[/green]")
+                console.print("[dim]Run 'pa agent poll' to reprocess.[/dim]")
+            except ValueError:
+                console.print("[red]✗ Invalid choice.[/red]")
+
+
 # --- Task Commands ---
 
 
