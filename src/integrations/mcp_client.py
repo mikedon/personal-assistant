@@ -52,7 +52,8 @@ class MCPClient:
             headers={
                 "Authorization": f"Bearer {token}",
                 "Content-Type": "application/json",
-                "Accept": "application/json",
+                # MCP requires accepting both JSON and SSE (Server-Sent Events)
+                "Accept": "application/json, text/event-stream",
             },
             timeout=timeout,
             transport=transport,
