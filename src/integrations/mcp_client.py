@@ -2,6 +2,8 @@
 
 Implements the Model Context Protocol (MCP) client for interacting with
 Granola's official MCP server at https://mcp.granola.ai/mcp.
+
+Uses JSON-RPC 2.0 protocol for all tool calls.
 """
 
 import logging
@@ -13,7 +15,7 @@ logger = logging.getLogger(__name__)
 
 
 class MCPClient:
-    """HTTP client for Granola MCP server.
+    """HTTP client for Granola MCP server using JSON-RPC 2.0.
 
     Provides typed methods for calling Granola MCP tools:
     - list_meetings: Scan meetings by ID, title, date, attendees
@@ -42,11 +44,11 @@ class MCPClient:
         self.server_url = server_url.rstrip("/")
         self.token = token
         self.timeout = timeout
+        self._request_id = 0
 
         # Create async HTTP client with retry transport
         transport = httpx.AsyncHTTPTransport(retries=max_retries)
         self.client = httpx.AsyncClient(
-            base_url=self.server_url,
             headers={
                 "Authorization": f"Bearer {token}",
                 "Content-Type": "application/json",
@@ -67,6 +69,75 @@ class MCPClient:
     async def __aexit__(self, exc_type, exc_val, exc_tb):
         """Context manager exit - cleanup resources."""
         await self.close()
+
+    def _next_request_id(self) -> int:
+        """Generate next JSON-RPC request ID."""
+        self._request_id += 1
+        return self._request_id
+
+    async def _call_tool(
+        self,
+        tool_name: str,
+        arguments: dict[str, Any],
+    ) -> Any:
+        """Call an MCP tool using JSON-RPC 2.0 protocol.
+
+        Args:
+            tool_name: Name of the MCP tool (e.g., "list_meetings")
+            arguments: Tool arguments as dict
+
+        Returns:
+            Tool result (parsed from JSON-RPC response)
+
+        Raises:
+            httpx.HTTPError: On HTTP request failures
+            RuntimeError: On JSON-RPC errors
+        """
+        # Build JSON-RPC 2.0 request
+        request_payload = {
+            "jsonrpc": "2.0",
+            "id": self._next_request_id(),
+            "method": "tools/call",
+            "params": {
+                "name": tool_name,
+                "arguments": arguments,
+            },
+        }
+
+        try:
+            logger.debug(f"Calling MCP tool '{tool_name}' with arguments: {arguments}")
+
+            # POST to base MCP endpoint
+            response = await self.client.post(
+                self.server_url,
+                json=request_payload,
+            )
+            response.raise_for_status()
+
+            # Parse JSON-RPC response
+            data = response.json()
+
+            # Check for JSON-RPC error
+            if "error" in data:
+                error = data["error"]
+                raise RuntimeError(
+                    f"MCP tool '{tool_name}' failed: "
+                    f"{error.get('code', 'unknown')} - {error.get('message', 'Unknown error')}"
+                )
+
+            # Return result
+            result = data.get("result", {})
+            logger.debug(f"MCP tool '{tool_name}' completed successfully")
+            return result
+
+        except httpx.HTTPStatusError as e:
+            logger.error(
+                f"MCP tool '{tool_name}' HTTP error: {e.response.status_code} {e.response.text}"
+            )
+            raise
+        except httpx.HTTPError as e:
+            logger.error(f"HTTP error calling MCP tool '{tool_name}': {e}")
+            raise
 
     async def list_meetings(
         self,
@@ -93,27 +164,15 @@ class MCPClient:
         Raises:
             httpx.HTTPError: On HTTP request failures
         """
-        payload = {"limit": limit}
+        arguments = {"limit": limit}
         if workspace_id:
-            payload["workspace_id"] = workspace_id
+            arguments["workspace_id"] = workspace_id
 
-        try:
-            logger.debug(f"Calling list_meetings with limit={limit}, workspace_id={workspace_id}")
-            response = await self.client.post("/tools/list_meetings", json=payload)
-            response.raise_for_status()
+        result = await self._call_tool("list_meetings", arguments)
+        meetings = result.get("meetings", [])
 
-            data = response.json()
-            meetings = data.get("meetings", [])
-
-            logger.debug(f"list_meetings returned {len(meetings)} meetings")
-            return meetings
-
-        except httpx.HTTPStatusError as e:
-            logger.error(f"MCP list_meetings failed: {e.response.status_code} {e.response.text}")
-            raise
-        except httpx.HTTPError as e:
-            logger.error(f"HTTP error calling list_meetings: {e}")
-            raise
+        logger.debug(f"list_meetings returned {len(meetings)} meetings")
+        return meetings
 
     async def get_meetings(
         self,
@@ -144,32 +203,17 @@ class MCPClient:
         Raises:
             httpx.HTTPError: On HTTP request failures
         """
-        payload: dict[str, Any] = {"limit": limit}
+        arguments: dict[str, Any] = {"limit": limit}
         if query:
-            payload["query"] = query
+            arguments["query"] = query
         if meeting_ids:
-            payload["meeting_ids"] = meeting_ids
+            arguments["meeting_ids"] = meeting_ids
 
-        try:
-            logger.debug(
-                f"Calling get_meetings with query={query}, "
-                f"meeting_ids={meeting_ids}, limit={limit}"
-            )
-            response = await self.client.post("/tools/get_meetings", json=payload)
-            response.raise_for_status()
+        result = await self._call_tool("get_meetings", arguments)
+        meetings = result.get("meetings", [])
 
-            data = response.json()
-            meetings = data.get("meetings", [])
-
-            logger.debug(f"get_meetings returned {len(meetings)} meetings with content")
-            return meetings
-
-        except httpx.HTTPStatusError as e:
-            logger.error(f"MCP get_meetings failed: {e.response.status_code} {e.response.text}")
-            raise
-        except httpx.HTTPError as e:
-            logger.error(f"HTTP error calling get_meetings: {e}")
-            raise
+        logger.debug(f"get_meetings returned {len(meetings)} meetings with content")
+        return meetings
 
     async def query_granola_meetings(
         self,
@@ -192,25 +236,11 @@ class MCPClient:
         Raises:
             httpx.HTTPError: On HTTP request failures
         """
-        payload = {"query": query, "limit": limit}
+        arguments = {"query": query, "limit": limit}
 
-        try:
-            logger.debug(f"Calling query_granola_meetings with query='{query}'")
-            response = await self.client.post("/tools/query_granola_meetings", json=payload)
-            response.raise_for_status()
-
-            data = response.json()
-            logger.debug("query_granola_meetings completed successfully")
-            return data
-
-        except httpx.HTTPStatusError as e:
-            logger.error(
-                f"MCP query_granola_meetings failed: {e.response.status_code} {e.response.text}"
-            )
-            raise
-        except httpx.HTTPError as e:
-            logger.error(f"HTTP error calling query_granola_meetings: {e}")
-            raise
+        result = await self._call_tool("query_granola_meetings", arguments)
+        logger.debug("query_granola_meetings completed successfully")
+        return result
 
     async def get_meeting_transcript(
         self,
@@ -233,16 +263,12 @@ class MCPClient:
             httpx.HTTPError: On HTTP request failures
             httpx.HTTPStatusError: 403 if not available on current tier
         """
-        payload = {"meeting_id": meeting_id}
+        arguments = {"meeting_id": meeting_id}
 
         try:
-            logger.debug(f"Calling get_meeting_transcript for meeting {meeting_id}")
-            response = await self.client.post("/tools/get_meeting_transcript", json=payload)
-            response.raise_for_status()
-
-            data = response.json()
+            result = await self._call_tool("get_meeting_transcript", arguments)
             logger.debug(f"get_meeting_transcript completed for meeting {meeting_id}")
-            return data
+            return result
 
         except httpx.HTTPStatusError as e:
             if e.response.status_code == 403:
@@ -250,12 +276,4 @@ class MCPClient:
                     f"Transcript not available for meeting {meeting_id}: "
                     "Requires paid Granola tier"
                 )
-            else:
-                logger.error(
-                    f"MCP get_meeting_transcript failed: "
-                    f"{e.response.status_code} {e.response.text}"
-                )
-            raise
-        except httpx.HTTPError as e:
-            logger.error(f"HTTP error calling get_meeting_transcript: {e}")
             raise

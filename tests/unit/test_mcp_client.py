@@ -1,4 +1,4 @@
-"""Unit tests for Granola MCP client."""
+"""Unit tests for Granola MCP client with JSON-RPC 2.0."""
 
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -19,46 +19,54 @@ def mcp_client():
 
 @pytest.fixture
 def sample_meetings_list():
-    """Sample response from list_meetings."""
+    """Sample JSON-RPC response from list_meetings."""
     return {
-        "meetings": [
-            {
-                "id": "meeting1",
-                "title": "Team Standup",
-                "date": "2026-02-10T10:00:00Z",
-                "attendees": ["alice@example.com", "bob@example.com"],
-                "workspace_id": "workspace1",
-            },
-            {
-                "id": "meeting2",
-                "title": "Design Review",
-                "date": "2026-02-09T14:00:00Z",
-                "attendees": ["charlie@example.com"],
-                "workspace_id": "workspace1",
-            },
-        ]
+        "jsonrpc": "2.0",
+        "id": 1,
+        "result": {
+            "meetings": [
+                {
+                    "id": "meeting1",
+                    "title": "Team Standup",
+                    "date": "2026-02-10T10:00:00Z",
+                    "attendees": ["alice@example.com", "bob@example.com"],
+                    "workspace_id": "workspace1",
+                },
+                {
+                    "id": "meeting2",
+                    "title": "Design Review",
+                    "date": "2026-02-09T14:00:00Z",
+                    "attendees": ["charlie@example.com"],
+                    "workspace_id": "workspace1",
+                },
+            ]
+        },
     }
 
 
 @pytest.fixture
 def sample_meetings_with_content():
-    """Sample response from get_meetings with content."""
+    """Sample JSON-RPC response from get_meetings with content."""
     return {
-        "meetings": [
-            {
-                "id": "meeting1",
-                "title": "Team Standup",
-                "date": "2026-02-10T10:00:00Z",
-                "attendees": ["alice@example.com", "bob@example.com"],
-                "workspace_id": "workspace1",
-                "content": "Discussed project timeline and upcoming milestones.",
-            }
-        ]
+        "jsonrpc": "2.0",
+        "id": 1,
+        "result": {
+            "meetings": [
+                {
+                    "id": "meeting1",
+                    "title": "Team Standup",
+                    "date": "2026-02-10T10:00:00Z",
+                    "attendees": ["alice@example.com", "bob@example.com"],
+                    "workspace_id": "workspace1",
+                    "content": "Discussed project timeline and upcoming milestones.",
+                }
+            ]
+        },
     }
 
 
 class TestMCPClient:
-    """Test MCP client functionality."""
+    """Test MCP client functionality with JSON-RPC 2.0."""
 
     def test_initialization(self):
         """Test MCP client initialization."""
@@ -91,7 +99,7 @@ class TestMCPClient:
 
     @pytest.mark.asyncio
     async def test_list_meetings_success(self, mcp_client, sample_meetings_list):
-        """Test successful list_meetings call."""
+        """Test successful list_meetings call with JSON-RPC."""
         # Mock HTTP response
         mock_response = MagicMock()
         mock_response.json.return_value = sample_meetings_list
@@ -105,10 +113,15 @@ class TestMCPClient:
             assert meetings[0]["title"] == "Team Standup"
             assert meetings[1]["id"] == "meeting2"
 
-            mcp_client.client.post.assert_called_once_with(
-                "/tools/list_meetings",
-                json={"limit": 100},
-            )
+            # Verify JSON-RPC call format
+            mcp_client.client.post.assert_called_once()
+            call_args = mcp_client.client.post.call_args
+            assert call_args[0][0] == "https://mcp.granola.ai/mcp"
+            request_payload = call_args[1]["json"]
+            assert request_payload["jsonrpc"] == "2.0"
+            assert request_payload["method"] == "tools/call"
+            assert request_payload["params"]["name"] == "list_meetings"
+            assert request_payload["params"]["arguments"]["limit"] == 100
 
     @pytest.mark.asyncio
     async def test_list_meetings_with_workspace_filter(self, mcp_client, sample_meetings_list):
@@ -122,10 +135,10 @@ class TestMCPClient:
 
             assert len(meetings) == 2
 
-            mcp_client.client.post.assert_called_once_with(
-                "/tools/list_meetings",
-                json={"limit": 50, "workspace_id": "workspace1"},
-            )
+            # Verify workspace_id in arguments
+            call_args = mcp_client.client.post.call_args
+            request_payload = call_args[1]["json"]
+            assert request_payload["params"]["arguments"]["workspace_id"] == "workspace1"
 
     @pytest.mark.asyncio
     async def test_list_meetings_http_error(self, mcp_client):
@@ -134,13 +147,31 @@ class TestMCPClient:
         with patch.object(
             mcp_client.client,
             "post",
-            new=AsyncMock(side_effect=httpx.HTTPStatusError(
-                "Server error",
-                request=MagicMock(),
-                response=MagicMock(status_code=500, text="Internal Server Error"),
-            )),
+            new=AsyncMock(
+                side_effect=httpx.HTTPStatusError(
+                    "Server error",
+                    request=MagicMock(),
+                    response=MagicMock(status_code=500, text="Internal Server Error"),
+                )
+            ),
         ):
             with pytest.raises(httpx.HTTPStatusError):
+                await mcp_client.list_meetings()
+
+    @pytest.mark.asyncio
+    async def test_list_meetings_jsonrpc_error(self, mcp_client):
+        """Test list_meetings handles JSON-RPC errors."""
+        # Mock JSON-RPC error response
+        mock_response = MagicMock()
+        mock_response.json.return_value = {
+            "jsonrpc": "2.0",
+            "id": 1,
+            "error": {"code": -32600, "message": "Invalid Request"},
+        }
+        mock_response.raise_for_status = MagicMock()
+
+        with patch.object(mcp_client.client, "post", new=AsyncMock(return_value=mock_response)):
+            with pytest.raises(RuntimeError, match="Invalid Request"):
                 await mcp_client.list_meetings()
 
     @pytest.mark.asyncio
@@ -158,10 +189,11 @@ class TestMCPClient:
             assert "content" in meetings[0]
             assert "Discussed project timeline" in meetings[0]["content"]
 
-            mcp_client.client.post.assert_called_once_with(
-                "/tools/get_meetings",
-                json={"limit": 100, "meeting_ids": ["meeting1"]},
-            )
+            # Verify JSON-RPC call format
+            call_args = mcp_client.client.post.call_args
+            request_payload = call_args[1]["json"]
+            assert request_payload["params"]["name"] == "get_meetings"
+            assert request_payload["params"]["arguments"]["meeting_ids"] == ["meeting1"]
 
     @pytest.mark.asyncio
     async def test_get_meetings_with_query(self, mcp_client, sample_meetings_with_content):
@@ -175,10 +207,11 @@ class TestMCPClient:
 
             assert len(meetings) == 1
 
-            mcp_client.client.post.assert_called_once_with(
-                "/tools/get_meetings",
-                json={"limit": 50, "query": "timeline"},
-            )
+            # Verify query in arguments
+            call_args = mcp_client.client.post.call_args
+            request_payload = call_args[1]["json"]
+            assert request_payload["params"]["arguments"]["query"] == "timeline"
+            assert request_payload["params"]["arguments"]["limit"] == 50
 
     @pytest.mark.asyncio
     async def test_get_meetings_http_error(self, mcp_client):
@@ -196,10 +229,14 @@ class TestMCPClient:
         """Test query_granola_meetings with LLM response."""
         mock_response = MagicMock()
         mock_response.json.return_value = {
-            "answer": "The team discussed the Q1 roadmap and agreed to prioritize feature X.",
-            "meetings": [
-                {"id": "meeting1", "title": "Planning Meeting"},
-            ],
+            "jsonrpc": "2.0",
+            "id": 1,
+            "result": {
+                "answer": "The team discussed the Q1 roadmap and agreed to prioritize feature X.",
+                "meetings": [
+                    {"id": "meeting1", "title": "Planning Meeting"},
+                ],
+            },
         }
         mock_response.raise_for_status = MagicMock()
 
@@ -213,21 +250,26 @@ class TestMCPClient:
             assert "meetings" in result
             assert "Q1 roadmap" in result["answer"]
 
-            mcp_client.client.post.assert_called_once_with(
-                "/tools/query_granola_meetings",
-                json={"query": "What did the team decide about Q1?", "limit": 10},
-            )
+            # Verify JSON-RPC call format
+            call_args = mcp_client.client.post.call_args
+            request_payload = call_args[1]["json"]
+            assert request_payload["params"]["name"] == "query_granola_meetings"
+            assert request_payload["params"]["arguments"]["query"] == "What did the team decide about Q1?"
 
     @pytest.mark.asyncio
     async def test_get_meeting_transcript_success(self, mcp_client):
         """Test get_meeting_transcript for paid tier."""
         mock_response = MagicMock()
         mock_response.json.return_value = {
-            "meeting_id": "meeting1",
-            "transcript": "Alice: Let's discuss the roadmap...",
-            "segments": [
-                {"speaker": "Alice", "text": "Let's discuss the roadmap...", "timestamp": 0.0}
-            ],
+            "jsonrpc": "2.0",
+            "id": 1,
+            "result": {
+                "meeting_id": "meeting1",
+                "transcript": "Alice: Let's discuss the roadmap...",
+                "segments": [
+                    {"speaker": "Alice", "text": "Let's discuss the roadmap...", "timestamp": 0.0}
+                ],
+            },
         }
         mock_response.raise_for_status = MagicMock()
 
@@ -238,10 +280,11 @@ class TestMCPClient:
             assert "transcript" in result
             assert "segments" in result
 
-            mcp_client.client.post.assert_called_once_with(
-                "/tools/get_meeting_transcript",
-                json={"meeting_id": "meeting1"},
-            )
+            # Verify JSON-RPC call format
+            call_args = mcp_client.client.post.call_args
+            request_payload = call_args[1]["json"]
+            assert request_payload["params"]["name"] == "get_meeting_transcript"
+            assert request_payload["params"]["arguments"]["meeting_id"] == "meeting1"
 
     @pytest.mark.asyncio
     async def test_get_meeting_transcript_forbidden(self, mcp_client):
@@ -262,3 +305,20 @@ class TestMCPClient:
                 await mcp_client.get_meeting_transcript(meeting_id="meeting1")
 
             assert exc_info.value.response.status_code == 403
+
+    @pytest.mark.asyncio
+    async def test_request_id_increments(self, mcp_client, sample_meetings_list):
+        """Test JSON-RPC request IDs increment."""
+        mock_response = MagicMock()
+        mock_response.json.return_value = sample_meetings_list
+        mock_response.raise_for_status = MagicMock()
+
+        with patch.object(mcp_client.client, "post", new=AsyncMock(return_value=mock_response)):
+            # Make two calls
+            await mcp_client.list_meetings(limit=10)
+            await mcp_client.list_meetings(limit=20)
+
+            # Check that request IDs incremented
+            calls = mcp_client.client.post.call_args_list
+            assert calls[0][1]["json"]["id"] == 1
+            assert calls[1][1]["json"]["id"] == 2
