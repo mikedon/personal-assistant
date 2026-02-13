@@ -40,6 +40,8 @@ class GranolaOAuthManager:
 
     # OAuth endpoints (discovered dynamically)
     _oauth_metadata: dict | None = None
+    _client_id: str | None = None
+    _client_secret: str | None = None  # Only used if confidential client
 
     def __init__(self, token_path: Path):
         """Initialize Granola OAuth manager.
@@ -97,11 +99,68 @@ class GranolaOAuthManager:
 
         return code_verifier, code_challenge
 
+    async def _register_client(self, metadata: dict) -> tuple[str, str | None]:
+        """Register as OAuth client using Dynamic Client Registration (RFC 7591).
+
+        Args:
+            metadata: OAuth server metadata
+
+        Returns:
+            Tuple of (client_id, client_secret or None)
+
+        Raises:
+            RuntimeError: If registration fails or not supported
+        """
+        if not metadata.get("registration_endpoint"):
+            # No DCR support - try without client_id (some MCP servers allow this)
+            logger.warning(
+                "OAuth server doesn't support Dynamic Client Registration. "
+                "Attempting authentication without client_id."
+            )
+            return ("", None)
+
+        try:
+            registration_endpoint = metadata["registration_endpoint"]
+
+            # Client metadata for registration
+            client_metadata = {
+                "client_name": "Personal Assistant CLI",
+                "redirect_uris": [self.REDIRECT_URI],
+                "grant_types": ["authorization_code", "refresh_token"],
+                "response_types": ["code"],
+                "token_endpoint_auth_method": "none",  # Public client (PKCE)
+                "scope": " ".join(self.SCOPES),
+            }
+
+            async with httpx.AsyncClient() as client:
+                response = await client.post(
+                    registration_endpoint,
+                    json=client_metadata,
+                    headers={"Content-Type": "application/json"},
+                    timeout=10.0,
+                )
+
+                if response.status_code == 201:
+                    registration = response.json()
+                    client_id = registration["client_id"]
+                    client_secret = registration.get("client_secret")  # May be None for public clients
+
+                    logger.info(f"Successfully registered OAuth client: {client_id}")
+                    return (client_id, client_secret)
+                else:
+                    raise RuntimeError(
+                        f"Client registration failed: {response.status_code} {response.text}"
+                    )
+
+        except httpx.HTTPError as e:
+            raise RuntimeError(f"Failed to register OAuth client: {e}") from e
+
     async def authenticate(self) -> str:
         """Run MCP-compliant browser OAuth flow with PKCE.
 
         Implements:
         - Authorization server discovery (RFC 9728)
+        - Dynamic Client Registration (RFC 7591)
         - PKCE (required by MCP spec)
         - Resource indicators (RFC 8807)
 
@@ -119,6 +178,9 @@ class GranolaOAuthManager:
             auth_endpoint = metadata["authorization_endpoint"]
             token_endpoint = metadata["token_endpoint"]
 
+            # Register as OAuth client (Dynamic Client Registration)
+            self._client_id, self._client_secret = await self._register_client(metadata)
+
             # Generate PKCE pair
             code_verifier, code_challenge = self._generate_pkce_pair()
 
@@ -130,7 +192,7 @@ class GranolaOAuthManager:
             server = HTTPServer(("localhost", server_port), OAuthCallbackServer)
             logger.debug(f"Started local OAuth callback server on port {server_port}")
 
-            # Build authorization URL with PKCE
+            # Build authorization URL with PKCE and client_id
             auth_params = {
                 "response_type": "code",
                 "redirect_uri": self.REDIRECT_URI,
@@ -138,6 +200,11 @@ class GranolaOAuthManager:
                 "code_challenge": code_challenge,
                 "code_challenge_method": "S256",
             }
+
+            # Add client_id if we have one from registration
+            if self._client_id:
+                auth_params["client_id"] = self._client_id
+
             auth_url = f"{auth_endpoint}?{urlencode(auth_params)}"
 
             # Open browser for authorization
@@ -166,6 +233,12 @@ class GranolaOAuthManager:
                     "resource": self.MCP_SERVER_URL,  # RFC 8807 resource indicator
                 }
 
+                # Add client credentials if we have them
+                if self._client_id:
+                    token_data["client_id"] = self._client_id
+                if self._client_secret:
+                    token_data["client_secret"] = self._client_secret
+
                 response = await client.post(
                     token_endpoint,
                     data=token_data,
@@ -182,7 +255,7 @@ class GranolaOAuthManager:
             # Save token with secure permissions
             self._save_token(token_response)
 
-            logger.info("Successfully authenticated with Granola MCP server (OAuth 2.1 + PKCE)")
+            logger.info("Successfully authenticated with Granola MCP server (OAuth 2.1 + PKCE + DCR)")
             return token_response["access_token"]
 
         except Exception as e:

@@ -42,13 +42,93 @@ class TestGranolaOAuthManager:
 
     @pytest.mark.asyncio
     async def test_authenticate_success(self, token_path, mock_token_data):
-        """Test successful MCP-compliant OAuth authentication flow with PKCE."""
+        """Test successful MCP-compliant OAuth authentication flow with PKCE and DCR."""
         manager = GranolaOAuthManager(token_path)
 
         # Mock OAuth metadata discovery
         mock_metadata = {
             "authorization_endpoint": "https://mcp.granola.ai/oauth/authorize",
             "token_endpoint": "https://mcp.granola.ai/oauth/token",
+            "registration_endpoint": "https://mcp.granola.ai/oauth/register",
+        }
+
+        # Mock client registration response
+        mock_registration_response = {
+            "client_id": "test_client_id",
+            "client_secret": None,  # Public client
+        }
+
+        # Mock browser opening
+        with patch("webbrowser.open") as mock_browser:
+            # Mock callback server and handler
+            with patch("src.integrations.granola_oauth.HTTPServer") as mock_server_class:
+                with patch("src.integrations.granola_oauth.OAuthCallbackServer") as mock_callback_class:
+                    mock_server = MagicMock()
+                    mock_server_class.return_value = mock_server
+
+                    # Simulate auth code being set when handle_request() is called
+                    def set_auth_code():
+                        mock_callback_class.auth_code = "test_auth_code"
+
+                    mock_server.handle_request.side_effect = set_auth_code
+
+                    # Mock HTTP responses
+                    with patch("httpx.AsyncClient") as mock_client_class:
+                        mock_client = MagicMock()
+
+                        # Mock discovery response
+                        mock_discovery_response = MagicMock()
+                        mock_discovery_response.json.return_value = mock_metadata
+                        mock_discovery_response.raise_for_status = MagicMock()
+
+                        # Mock registration response
+                        mock_reg_response = MagicMock()
+                        mock_reg_response.status_code = 201
+                        mock_reg_response.json.return_value = mock_registration_response
+
+                        # Mock token exchange response
+                        mock_token_response = MagicMock()
+                        mock_token_response.status_code = 200
+                        mock_token_response.json.return_value = mock_token_data
+
+                        # Setup client to return different responses based on call
+                        mock_client.get = AsyncMock(return_value=mock_discovery_response)
+
+                        # post() returns different responses based on call order
+                        post_responses = [mock_reg_response, mock_token_response]
+                        mock_client.post = AsyncMock(side_effect=post_responses)
+
+                        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+                        mock_client.__aexit__ = AsyncMock()
+                        mock_client_class.return_value = mock_client
+
+                        # Run authentication
+                        token = await manager.authenticate()
+
+                        # Verify
+                        assert token == "test_access_token"
+                        mock_browser.assert_called_once()
+                        assert token_path.exists()
+
+                        # Verify client registration was called
+                        assert mock_client.post.call_count == 2  # Registration + token exchange
+
+                        # Verify PKCE parameters and client_id were used in token exchange
+                        token_call_args = mock_client.post.call_args_list[1]  # Second call
+                        assert "code_verifier" in token_call_args.kwargs["data"]
+                        assert "resource" in token_call_args.kwargs["data"]
+                        assert "client_id" in token_call_args.kwargs["data"]
+
+    @pytest.mark.asyncio
+    async def test_authenticate_without_dcr(self, token_path, mock_token_data):
+        """Test authentication when DCR is not supported (no registration_endpoint)."""
+        manager = GranolaOAuthManager(token_path)
+
+        # Mock OAuth metadata discovery WITHOUT registration_endpoint
+        mock_metadata = {
+            "authorization_endpoint": "https://mcp.granola.ai/oauth/authorize",
+            "token_endpoint": "https://mcp.granola.ai/oauth/token",
+            # No registration_endpoint - DCR not supported
         }
 
         # Mock browser opening
@@ -79,12 +159,6 @@ class TestGranolaOAuthManager:
                         mock_token_response.status_code = 200
                         mock_token_response.json.return_value = mock_token_data
 
-                        # Setup client to return different responses
-                        async def mock_request(url_or_method, *args, **kwargs):
-                            if ".well-known" in str(url_or_method):
-                                return mock_discovery_response
-                            return mock_token_response
-
                         mock_client.get = AsyncMock(return_value=mock_discovery_response)
                         mock_client.post = AsyncMock(return_value=mock_token_response)
                         mock_client.__aenter__ = AsyncMock(return_value=mock_client)
@@ -99,7 +173,10 @@ class TestGranolaOAuthManager:
                         mock_browser.assert_called_once()
                         assert token_path.exists()
 
-                        # Verify PKCE parameters were used
+                        # Should only have token exchange call, no registration
+                        assert mock_client.post.call_count == 1
+
+                        # Verify token exchange still works without client_id
                         call_args = mock_client.post.call_args
                         assert "code_verifier" in call_args.kwargs["data"]
                         assert "resource" in call_args.kwargs["data"]
