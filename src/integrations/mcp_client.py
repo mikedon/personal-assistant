@@ -115,8 +115,27 @@ class MCPClient:
             )
             response.raise_for_status()
 
+            # Log response details for debugging
+            logger.debug(f"Response status: {response.status_code}")
+            logger.debug(f"Response headers: {dict(response.headers)}")
+            logger.debug(f"Response content-type: {response.headers.get('content-type', 'unknown')}")
+            logger.debug(f"Response content (first 500 chars): {response.text[:500]}")
+
             # Parse JSON-RPC response
-            data = response.json()
+            try:
+                data = response.json()
+            except ValueError as e:
+                logger.error(
+                    f"Failed to parse JSON response from MCP tool '{tool_name}': {e}\n"
+                    f"Response status: {response.status_code}\n"
+                    f"Response headers: {dict(response.headers)}\n"
+                    f"Response content: {response.text[:1000]}"
+                )
+                raise RuntimeError(
+                    f"Invalid JSON response from MCP tool '{tool_name}': {e}\n"
+                    f"Content-Type: {response.headers.get('content-type', 'unknown')}\n"
+                    f"Response: {response.text[:500]}"
+                ) from e
 
             # Check for JSON-RPC error
             if "error" in data:
