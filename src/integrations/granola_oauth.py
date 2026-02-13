@@ -52,11 +52,12 @@ class GranolaOAuthManager:
         try:
             logger.info("Starting Granola OAuth authentication flow")
 
-            # Start local callback server
-            callback_server = OAuthCallbackServer()
-            server_port = 8765
+            # Reset class variable before starting
+            OAuthCallbackServer.auth_code = None
 
-            server = HTTPServer(("localhost", server_port), callback_server)
+            # Start local callback server
+            server_port = 8765
+            server = HTTPServer(("localhost", server_port), OAuthCallbackServer)
             logger.debug(f"Started local OAuth callback server on port {server_port}")
 
             # Build authorization URL
@@ -74,13 +75,13 @@ class GranolaOAuthManager:
             # Wait for callback (single request)
             server.handle_request()
 
-            # Get authorization code from callback
-            if not callback_server.auth_code:
+            # Get authorization code from callback (class variable)
+            if not OAuthCallbackServer.auth_code:
                 raise RuntimeError(
                     "OAuth authorization failed: No authorization code received"
                 )
 
-            auth_code = callback_server.auth_code
+            auth_code = OAuthCallbackServer.auth_code
             logger.debug("Received authorization code")
 
             # Exchange code for token

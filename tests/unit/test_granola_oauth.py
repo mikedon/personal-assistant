@@ -47,18 +47,17 @@ class TestGranolaOAuthManager:
 
         # Mock browser opening
         with patch("webbrowser.open") as mock_browser:
-            # Mock callback server
+            # Mock callback server and handler
             with patch("src.integrations.granola_oauth.HTTPServer") as mock_server_class:
-                mock_server = MagicMock()
-                mock_server_class.return_value = mock_server
+                with patch("src.integrations.granola_oauth.OAuthCallbackServer") as mock_callback_class:
+                    mock_server = MagicMock()
+                    mock_server_class.return_value = mock_server
 
-                # Simulate auth code received
-                with patch(
-                    "src.integrations.granola_oauth.OAuthCallbackServer"
-                ) as mock_callback_class:
-                    mock_callback = MagicMock()
-                    mock_callback.auth_code = "test_auth_code"
-                    mock_callback_class.return_value = mock_callback
+                    # Simulate auth code being set when handle_request() is called
+                    def set_auth_code():
+                        mock_callback_class.auth_code = "test_auth_code"
+
+                    mock_server.handle_request.side_effect = set_auth_code
 
                     # Mock token exchange
                     mock_response = MagicMock()
