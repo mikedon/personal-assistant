@@ -5,11 +5,14 @@ Granola's official MCP server at https://mcp.granola.ai/mcp.
 
 Uses JSON-RPC 2.0 protocol for all tool calls.
 Handles both JSON and Server-Sent Events (SSE) responses.
+Parses MCP content format (text/XML responses).
 """
 
 import json
 import logging
+import re
 from typing import Any
+from xml.etree import ElementTree as ET
 
 import httpx
 
@@ -113,6 +116,112 @@ class MCPClient:
             return json.loads(json_str)
         except json.JSONDecodeError as e:
             raise ValueError(f"Invalid JSON in SSE data: {e}\nData: {json_str[:500]}") from e
+
+    def _parse_mcp_content(self, result: dict[str, Any]) -> str:
+        """Parse MCP content format to extract text.
+
+        MCP returns content as an array of typed blocks:
+            {"content": [{"type": "text", "text": "..."}]}
+
+        Args:
+            result: The JSON-RPC result object
+
+        Returns:
+            Combined text content from all text blocks
+
+        Raises:
+            ValueError: If content format is invalid
+        """
+        content_blocks = result.get("content", [])
+
+        if not content_blocks:
+            raise ValueError(f"No content blocks in MCP result: {result}")
+
+        text_parts = []
+        for block in content_blocks:
+            if block.get("type") == "text":
+                text_parts.append(block.get("text", ""))
+
+        if not text_parts:
+            raise ValueError(f"No text content in MCP result: {result}")
+
+        return "\n".join(text_parts)
+
+    def _parse_meetings_xml(self, xml_text: str, include_content: bool = False) -> list[dict[str, Any]]:
+        """Parse meetings from XML-like format using regex.
+
+        Granola returns meetings in XML format, but it often contains unescaped
+        special characters that break XML parsing. We use regex to extract
+        meetings more robustly.
+
+        Format:
+            <meetings_data count="120">
+              <meeting id="..." title="..." date="...">
+                <known_participants>...</known_participants>
+                <notes>...</notes>
+              </meeting>
+            </meetings_data>
+
+        Args:
+            xml_text: XML text containing meetings data
+            include_content: If True, extract meeting notes/content
+
+        Returns:
+            List of meeting dicts
+        """
+        meetings = []
+
+        # Find all meeting tags using regex
+        meeting_pattern = r'<meeting\s+([^>]+)>(.*?)</meeting>'
+        for match in re.finditer(meeting_pattern, xml_text, re.DOTALL):
+            attrs_str = match.group(1)
+            content = match.group(2)
+
+            # Extract attributes from meeting tag
+            meeting = {}
+
+            # Extract id
+            id_match = re.search(r'id="([^"]+)"', attrs_str)
+            meeting["id"] = id_match.group(1) if id_match else ""
+
+            # Extract title
+            title_match = re.search(r'title="([^"]+)"', attrs_str)
+            meeting["title"] = title_match.group(1) if title_match else ""
+
+            # Extract date
+            date_match = re.search(r'date="([^"]+)"', attrs_str)
+            meeting["date"] = date_match.group(1) if date_match else ""
+
+            # Extract workspace_id (optional)
+            workspace_match = re.search(r'workspace_id="([^"]+)"', attrs_str)
+            meeting["workspace_id"] = workspace_match.group(1) if workspace_match else ""
+
+            # Extract attendees from known_participants
+            participants_match = re.search(
+                r'<known_participants>(.*?)</known_participants>',
+                content,
+                re.DOTALL
+            )
+            if participants_match:
+                participants_text = participants_match.group(1)
+                # Extract email addresses (in angle brackets)
+                emails = re.findall(r'<([^>]+@[^>]+)>', participants_text)
+                meeting["attendees"] = emails
+            else:
+                meeting["attendees"] = []
+
+            # Extract notes/content if requested
+            if include_content:
+                notes_match = re.search(r'<notes>(.*?)</notes>', content, re.DOTALL)
+                if notes_match:
+                    meeting["content"] = notes_match.group(1).strip()
+                else:
+                    meeting["content"] = ""
+
+            meetings.append(meeting)
+
+        logger.debug(f"Parsed {len(meetings)} meetings from XML-like format")
+        return meetings
 
     async def _call_tool(
         self,
@@ -234,7 +343,15 @@ class MCPClient:
             arguments["workspace_id"] = workspace_id
 
         result = await self._call_tool("list_meetings", arguments)
-        meetings = result.get("meetings", [])
+
+        # Parse MCP content format
+        try:
+            xml_text = self._parse_mcp_content(result)
+            meetings = self._parse_meetings_xml(xml_text)
+        except ValueError as e:
+            logger.error(f"Failed to parse list_meetings response: {e}")
+            # Return empty list if parsing fails
+            return []
 
         logger.debug(f"list_meetings returned {len(meetings)} meetings")
         return meetings
@@ -275,7 +392,15 @@ class MCPClient:
             arguments["meeting_ids"] = meeting_ids
 
         result = await self._call_tool("get_meetings", arguments)
-        meetings = result.get("meetings", [])
+
+        # Parse MCP content format with meeting content
+        try:
+            xml_text = self._parse_mcp_content(result)
+            meetings = self._parse_meetings_xml(xml_text, include_content=True)
+        except ValueError as e:
+            logger.error(f"Failed to parse get_meetings response: {e}")
+            # Return empty list if parsing fails
+            return []
 
         logger.debug(f"get_meetings returned {len(meetings)} meetings with content")
         return meetings
