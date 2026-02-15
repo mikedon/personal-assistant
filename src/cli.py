@@ -1744,6 +1744,7 @@ def tasks_parse(text, dry_run, yes):
                     source=TaskSource.MANUAL,
                     due_date=extracted.due_date,
                     tags=extracted.tags,
+                    document_links=extracted.document_links,
                     initiative_id=initiative_id,
                 )
                 console.print(f"[green]✓[/green] Created task #{task.id}: {task.title}")
