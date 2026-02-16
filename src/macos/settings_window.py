@@ -60,12 +60,13 @@ class SettingsWindowController(NSWindowController):
     def load_configuration(self) -> None:
         """Load configuration from API."""
         try:
-            response = self.client.get(f"{self.api_url}/api/config")
+            response = self.client.get(f"{self.api_url}/api/config/")
             response.raise_for_status()
             self.current_config = response.json()
             logger.info("Configuration loaded successfully")
         except Exception as e:
             logger.error(f"Failed to load configuration: {e}")
+            self.current_config = {}
 
     def save_configuration(self) -> bool:
         """Save current configuration to API.
@@ -74,7 +75,7 @@ class SettingsWindowController(NSWindowController):
             True if successful, False otherwise
         """
         try:
-            response = self.client.put(f"{self.api_url}/api/config", json=self.current_config)
+            response = self.client.put(f"{self.api_url}/api/config/", json=self.current_config)
             response.raise_for_status()
             logger.info("Configuration saved successfully")
             return True
