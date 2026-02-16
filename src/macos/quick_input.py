@@ -40,6 +40,20 @@ except ImportError:
     logger.warning("pynput not available - global hotkey will not work")
 
 
+class QuickInputTextField(NSTextField):
+    """Custom text field with improved keyboard handling."""
+    
+    controller = None  # Reference to the controller
+    
+    def acceptsFirstResponder(self) -> bool:
+        """Allow this field to receive keyboard focus."""
+        return True
+    
+    def becomeFirstResponder(self) -> bool:
+        """Handle becoming first responder."""
+        return objc.super(QuickInputTextField, self).becomeFirstResponder()
+
+
 class QuickInputWindowController(NSWindowController):
     """Controller for the quick input popup window."""
 
@@ -78,26 +92,32 @@ class QuickInputWindowController(NSWindowController):
         
         rect = NSMakeRect(x, y, width, height)
         
-        # Create window
+        # Create window with appropriate style
+        style_mask = 1 + 2  # NSWindowStyleMaskTitled + NSWindowStyleMaskClosable
         self.window = NSWindow.alloc().initWithContentRect_styleMask_backing_defer_(
             rect,
-            15,  # NSTitledWindowMask | NSClosableWindowMask | NSMiniaturizableWindowMask | NSResizableWindowMask
+            style_mask,
             2,   # NSBackingStoreBuffered
             False,
         )
         
         self.window.setTitle_("Quick Input")
         self.window.setDelegate_(self)
-        self.window.setLevel_(3)  # Floating window level
+        self.window.setLevel_(10)  # Floating window level (NSFloatingWindowLevel)
+        self.window.setOpaque_(True)
+        self.window.setHasShadow_(True)
         
         # Create content view
         content = NSView.alloc().initWithFrame_(NSZeroRect)
         
-        # Create text field
+        # Create custom text field with improved focus handling
         text_frame = NSMakeRect(10, 10, width - 100, 40)
-        self.text_field = NSTextField.alloc().initWithFrame_(text_frame)
+        self.text_field = QuickInputTextField.alloc().initWithFrame_(text_frame)
         self.text_field.setPlaceholderString_("Enter task or command...")
         self.text_field.setDelegate_(self)
+        self.text_field.setEditable_(True)
+        self.text_field.setSelectable_(True)
+        self.text_field.controller = self
         content.addSubview_(self.text_field)
         
         # Create submit button
@@ -119,12 +139,17 @@ class QuickInputWindowController(NSWindowController):
         if self.text_field:
             self.text_field.setStringValue_("")
         
-        # Show and focus
-        self.window.makeKeyAndOrderFront_(self)
+        # Activate app and bring window to front
         NSApp.activateIgnoringOtherApps_(True)
+        self.window.makeKeyAndOrderFront_(self)
+        self.window.orderFrontRegardless()
         
+        # Set focus to text field
         if self.text_field:
+            # Make text field the first responder
             self.window.makeFirstResponder_(self.text_field)
+            # Ensure text field is active
+            self.text_field.becomeFirstResponder()
 
     def submit_(self, sender=None) -> None:
         """Handle submit button or Enter key."""
@@ -144,10 +169,8 @@ class QuickInputWindowController(NSWindowController):
         # Close window
         self.close()
 
-    def controlTextDidEndEditing_(self, notification) -> None:
-        """Handle Return key in text field."""
-        # Note: This is called after editing ends
-        # We use a different approach - check for Return in keyDown
+    def controlTextDidChange_(self, notification) -> None:
+        """Handle text field changes."""
         pass
 
     def windowShouldClose_(self, sender) -> bool:
