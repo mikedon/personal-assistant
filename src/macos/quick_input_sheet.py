@@ -17,64 +17,40 @@ from AppKit import (
     NSTextField,
     NSSecureTextField,
 )
-from Foundation import NSMakeRect
+from Foundation import NSMakeRect, NSObject
 
 from src.macos.command_parser import CommandParser, ParsedCommand
 
 logger = logging.getLogger(__name__)
 
 
-class QuickInputSheet:
-    """Modal sheet-based input dialog for task creation.
+class QuickInputDialogDelegate(NSObject):
+    """Delegate for managing the quick input alert dialog."""
     
-    This implementation uses NSAlert with a text field, which:
-    - Automatically becomes key when displayed
-    - Properly handles keyboard input
-    - Works reliably in menu bar app context
-    - Provides native macOS appearance and behavior
-    """
-    
-    def __init__(self, api_url: str = "http://localhost:8000", on_submit: Optional[Callable] = None):
-        """Initialize the quick input sheet.
-        
-        Args:
-            api_url: Base URL of the API
-            on_submit: Callback when user submits (optional for testing)
-        """
+    def init(self, on_submit=None, api_url="http://localhost:8000"):
+        """Initialize the delegate."""
+        self = objc.super(QuickInputDialogDelegate, self).init()
+        if self is None:
+            return None
+        self.on_submit = on_submit
         self.api_url = api_url
         self.client = httpx.Client(timeout=10.0)
-        self.on_submit = on_submit
+        return self
     
-    def show(self, parent_window=None) -> None:
-        """Show the quick input dialog as a modal sheet.
-        
-        Args:
-            parent_window: Parent window to attach sheet to (optional)
-        """
-        logger.info("Showing quick input sheet")
-        
-        # Important: Must use performSelectorOnMainThread since NSAlert must run on main thread
-        # Using waitUntilDone=False lets the menu bar stay responsive
-        NSApp.performSelectorOnMainThread_withObject_waitUntilDone_(
-            "_showQuickInputDialogOnMainThread:",
-            self,
-            False
-        )
-    
-    def _showQuickInputDialogOnMainThread_(self, unused=None) -> None:
-        """Show the dialog on the main thread (called via performSelector)."""
+    def show_dialog(self):
+        """Show the input dialog."""
         try:
-            logger.info("Creating alert on main thread")
+            logger.info("Creating NSAlert")
             
-            # Create alert (which becomes the modal sheet)
+            # Create alert
             alert = NSAlert.alloc().init()
             alert.setMessageText_("Quick Task Input")
             alert.setInformativeText_("Enter a task or command:")
             
             # Add input field
-            input_field = NSTextField.alloc().initWithFrame_(NSMakeRect(0, 0, 300, 24))
-            input_field.setPlaceholderString_("Type task or 'parse <text>', 'voice', 'priority <level>'")
-            alert.setAccessoryView_(input_field)
+            self.input_field = NSTextField.alloc().initWithFrame_(NSMakeRect(0, 0, 300, 24))
+            self.input_field.setPlaceholderString_("Type task or 'parse <text>', 'voice', 'priority <level>'")
+            alert.setAccessoryView_(self.input_field)
             
             # Add buttons
             alert.addButtonWithTitle_("Submit")
@@ -82,45 +58,22 @@ class QuickInputSheet:
             
             logger.info("Alert created, showing modal dialog...")
             
-            # Show as modal dialog on main thread
+            # Show as modal dialog
             response = alert.runModal()
             logger.info(f"Modal dialog response: {response}")
             
             if response == 1000:  # Submit button (first button)
-                text = input_field.stringValue()
+                text = self.input_field.stringValue()
                 logger.info(f"User submitted: {text}")
                 self._process_input(text)
             else:
                 logger.info("User cancelled dialog")
                 
         except Exception as e:
-            logger.error(f"Error showing quick input sheet: {e}", exc_info=True)
+            logger.error(f"Error showing quick input dialog: {e}", exc_info=True)
     
-    def _sheet_did_end_(self, sheet, return_code, context):
-        """Callback when sheet closes.
-        
-        Args:
-            sheet: The alert sheet
-            return_code: Button pressed (1000=Submit, 1001=Cancel)
-            context: Context data
-        """
-        logger.info(f"Sheet closed with return code: {return_code}")
-        
-        if return_code == 1000:  # Submit button
-            # Get the input field from the alert
-            input_field = sheet.accessoryView()
-            text = input_field.stringValue()
-            logger.info(f"User input: {text}")
-            self._process_input(text)
-        else:
-            logger.info("User cancelled")
-    
-    def _process_input(self, text: str) -> None:
-        """Process user input and submit to API.
-        
-        Args:
-            text: User-entered text
-        """
+    def _process_input(self, text):
+        """Process user input."""
         if not text or not text.strip():
             logger.info("Empty input, ignoring")
             return
@@ -138,12 +91,8 @@ class QuickInputSheet:
             # Default: submit to API
             self._submit_to_api(parsed)
     
-    def _submit_to_api(self, parsed: ParsedCommand) -> None:
-        """Submit parsed command to API.
-        
-        Args:
-            parsed: Parsed command from input
-        """
+    def _submit_to_api(self, parsed):
+        """Submit parsed command to API."""
         try:
             if parsed.command_type == "voice":
                 logger.info("Voice command received (not yet implemented)")
@@ -166,10 +115,49 @@ class QuickInputSheet:
             
         except Exception as e:
             logger.error(f"Failed to create task: {e}")
+
+
+class QuickInputSheet:
+    """Modal sheet-based input dialog for task creation.
+    
+    This implementation uses NSAlert with a text field, which:
+    - Automatically becomes key when displayed
+    - Properly handles keyboard input
+    - Works reliably in menu bar app context
+    - Provides native macOS appearance and behavior
+    """
+    
+    def __init__(self, api_url: str = "http://localhost:8000", on_submit: Optional[Callable] = None):
+        """Initialize the quick input sheet.
+        
+        Args:
+            api_url: Base URL of the API
+            on_submit: Callback when user submits (optional for testing)
+        """
+        self.api_url = api_url
+        self.on_submit = on_submit
+        self.delegate = None
+    
+    def show(self, parent_window=None) -> None:
+        """Show the quick input dialog as a modal sheet.
+        
+        Args:
+            parent_window: Parent window to attach sheet to (optional)
+        """
+        logger.info("Showing quick input sheet")
+        
+        # Create and keep a reference to the delegate (NSObject)
+        # It needs to persist for the duration of the dialog
+        self.delegate = QuickInputDialogDelegate.alloc().init(self.on_submit, self.api_url)
+        
+        # Show the dialog
+        self.delegate.show_dialog()
     
     def close(self) -> None:
         """Clean up resources."""
-        self.client.close()
+        if self.delegate and hasattr(self.delegate, 'client'):
+            self.delegate.client.close()
+        self.delegate = None
 
 
 class QuickInputSheetManager:
