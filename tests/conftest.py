@@ -63,6 +63,10 @@ def client(test_db_engine, test_config, monkeypatch):
     from src import __version__
     from src.api.routes import tasks_router
     from src.api.schemas import HealthResponse
+    from src.services.agent_log_service import AgentLogService
+    from fastapi import Depends, HTTPException
+    from sqlalchemy import text
+    from sqlalchemy.orm import Session
 
     # Reset global state
     reset_config()
@@ -87,6 +91,35 @@ def client(test_db_engine, test_config, monkeypatch):
             version=__version__,
             database="connected",
         )
+
+    @app.get("/health/ready", response_model=HealthResponse, tags=["health"])
+    def readiness_check(db: Session = Depends(get_db)) -> HealthResponse:
+        """Readiness check endpoint for testing."""
+        try:
+            db.execute(text("SELECT 1"))
+            db_status = "connected"
+        except Exception as e:
+            raise HTTPException(
+                status_code=503,
+                detail=f"Database connection failed: {str(e)}"
+            )
+        return HealthResponse(
+            status="ready",
+            version=__version__,
+            database=db_status,
+        )
+
+    @app.get("/health/agent", tags=["health"])
+    def agent_health_check(db: Session = Depends(get_db)) -> dict:
+        """Agent health check endpoint for testing."""
+        agent_log_service = AgentLogService(db)
+        last_log = agent_log_service.get_recent_logs(limit=1)
+        last_poll = last_log[0].timestamp if last_log else None
+        return {
+            "status": "running" if last_poll else "not_started",
+            "last_poll": last_poll.isoformat() if last_poll else None,
+            "version": __version__,
+        }
 
     @app.get("/api/status", tags=["status"])
     def get_status():

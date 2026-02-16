@@ -1,0 +1,32 @@
+# Simplified Docker Compose for local testing
+# Usage: docker-compose -f docker-compose.simple.yml up
+
+services:
+  api:
+    build:
+      context: .
+      target: development
+    container_name: personal-assistant-api-dev
+    command: ["uvicorn", "src.api.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
+    environment:
+      PA_DATABASE_URL: sqlite:////app/data/tasks.db
+      PA_LLM_API_KEY: ${PA_LLM_API_KEY:-test-key}
+      PA_GOOGLE_CLIENT_ID: ${PA_GOOGLE_CLIENT_ID:-}
+      PA_GOOGLE_CLIENT_SECRET: ${PA_GOOGLE_CLIENT_SECRET:-}
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./src:/app/src
+      - ./tests:/app/tests
+      - ./config.yaml:/app/config.yaml
+      - sqlite_data:/app/data
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+volumes:
+  sqlite_data:
+    driver: local

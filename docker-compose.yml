@@ -1,0 +1,124 @@
+services:
+  # PostgreSQL Database (production)
+  db:
+    image: postgres:15-alpine
+    container_name: personal-assistant-db
+    environment:
+      POSTGRES_DB: personal_assistant
+      POSTGRES_USER: pauser
+      POSTGRES_PASSWORD_FILE: /run/secrets/db_password
+    secrets:
+      - db_password
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U pauser -d personal_assistant"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - pa-network
+
+  # Database Migration Service
+  migration:
+    build:
+      context: .
+      target: production
+    container_name: personal-assistant-migration
+    command: ["alembic", "upgrade", "head"]
+    environment:
+      PA_DATABASE_URL: postgresql://pauser:${DB_PASSWORD:-changeme}@db:5432/personal_assistant
+    depends_on:
+      db:
+        condition: service_healthy
+    networks:
+      - pa-network
+    volumes:
+      - ./alembic:/app/alembic
+      - ./alembic.ini:/app/alembic.ini
+
+  # API Service
+  api:
+    build:
+      context: .
+      target: production
+    container_name: personal-assistant-api
+    command: ["pa", "server", "--host", "0.0.0.0", "--port", "8000"]
+    environment:
+      PA_DATABASE_URL: postgresql://pauser:${DB_PASSWORD:-changeme}@db:5432/personal_assistant
+      PA_LLM_API_KEY_FILE: /run/secrets/llm_api_key
+      PA_GOOGLE_CLIENT_ID_FILE: /run/secrets/google_client_id
+      PA_GOOGLE_CLIENT_SECRET_FILE: /run/secrets/google_client_secret
+    secrets:
+      - llm_api_key
+      - google_client_id
+      - google_client_secret
+    ports:
+      - "8000:8000"
+    depends_on:
+      db:
+        condition: service_healthy
+      migration:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    networks:
+      - pa-network
+    volumes:
+      - oauth_tokens:/app/data
+    restart: unless-stopped
+
+  # Agent Service (Background Polling)
+  agent:
+    build:
+      context: .
+      target: production
+    container_name: personal-assistant-agent
+    command: ["pa", "agent", "start", "--foreground"]
+    environment:
+      PA_DATABASE_URL: postgresql://pauser:${DB_PASSWORD:-changeme}@db:5432/personal_assistant
+      PA_LLM_API_KEY_FILE: /run/secrets/llm_api_key
+      PA_GOOGLE_CLIENT_ID_FILE: /run/secrets/google_client_id
+      PA_GOOGLE_CLIENT_SECRET_FILE: /run/secrets/google_client_secret
+    secrets:
+      - llm_api_key
+      - google_client_id
+      - google_client_secret
+    depends_on:
+      db:
+        condition: service_healthy
+      migration:
+        condition: service_completed_successfully
+      api:
+        condition: service_healthy
+    networks:
+      - pa-network
+    volumes:
+      - oauth_tokens:/app/data
+    restart: unless-stopped
+
+networks:
+  pa-network:
+    driver: bridge
+
+volumes:
+  postgres_data:
+    driver: local
+  oauth_tokens:
+    driver: local
+
+secrets:
+  db_password:
+    file: ./secrets/db_password.txt
+  llm_api_key:
+    file: ./secrets/llm_api_key.txt
+  google_client_id:
+    file: ./secrets/google_client_id.txt
+  google_client_secret:
+    file: ./secrets/google_client_secret.txt

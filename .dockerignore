@@ -1,0 +1,73 @@
+# Git files
+.git
+.gitignore
+.gitattributes
+
+# Python cache
+__pycache__
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info
+dist
+build
+eggs
+.eggs
+*.egg
+
+# Virtual environments
+venv
+env
+ENV
+.venv
+
+# IDEs
+.vscode
+.idea
+*.swp
+*.swo
+*~
+
+# Testing
+.pytest_cache
+.coverage
+htmlcov
+.tox
+.hypothesis
+
+# Documentation
+docs/_build
+*.md
+!README.md
+
+# Docker files (no inception)
+Dockerfile*
+docker-compose*.yml
+.dockerignore
+
+# Development
+.env
+.env.*
+*.log
+testrun/
+config.yaml
+
+# macOS
+.DS_Store
+*.app
+
+# Database files (will use volumes)
+*.db
+*.db-shm
+*.db-wal
+
+# OAuth tokens (will use volumes)
+tokens.json
+.personal-assistant/
+
+# Secrets
+secrets/
+*.key
+*.pem
+*.crt
