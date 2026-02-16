@@ -27,6 +27,7 @@ from AppKit import (
 from Foundation import NSBundle, NSObject, NSTimer
 
 from src.macos.agent_status import AgentStatusManager
+from src.macos.settings_window import SettingsWindowController
 
 logger = logging.getLogger(__name__)
 
@@ -71,6 +72,11 @@ class MenuDelegate(NSObject):
         if self.app:
             self.app.poll_now_action(sender)
 
+    def showSettings_(self, sender):
+        """Show settings window action."""
+        if self.app:
+            self.app.show_settings(sender)
+
     def quitApp_(self, sender):
         """Quit app action."""
         if self.app:
@@ -109,6 +115,9 @@ class TaskMenuApp(NSObject):
         # Create a helper object to handle menu actions
         self.menu_delegate = MenuDelegate.alloc().init()
         self.menu_delegate.setApp_(self)
+        
+        # Settings window controller
+        self.settings_window = None
         return self
 
     @objc.python_method
@@ -122,6 +131,7 @@ class TaskMenuApp(NSObject):
         self.api_url = api_url
         self.refresh_interval = refresh_interval
         self.agent_manager = AgentStatusManager(api_url=api_url)
+        self.settings_window = SettingsWindowController.alloc().init(api_url=api_url)
 
     def setup_menu_bar(self) -> None:
         """Set up the menu bar item and menu."""
@@ -276,6 +286,19 @@ class TaskMenuApp(NSObject):
             return
 
         self.menu.removeAllItems()
+
+        # --- Settings Section ---
+        settings_item = NSMenuItem.alloc().initWithTitle_action_keyEquivalent_(
+            "⚙ Settings", None, ","
+        )
+        settings_item.setKeyEquivalentModifierMask_(0x100000)  # Cmd key
+        settings_item.setTarget_(self.menu_delegate)
+        settings_item.setAction_("showSettings:")
+        settings_item.setEnabled_(True)
+        self.menu.addItem_(settings_item)
+
+        # Separator after settings
+        self.menu.addItem_(NSMenuItem.separatorItem())
 
         # --- Agent Status Section ---
         if self.agent_status:
@@ -512,6 +535,15 @@ class TaskMenuApp(NSObject):
         thread = threading.Thread(target=self._poll_now_thread)
         thread.daemon = True
         thread.start()
+
+    def show_settings(self, sender: Any = None) -> None:
+        """Show settings window.
+
+        Args:
+            sender: Menu item (unused)
+        """
+        if self.settings_window:
+            self.settings_window.show_window()
 
     @objc.python_method
     def _start_agent_thread(self) -> None:

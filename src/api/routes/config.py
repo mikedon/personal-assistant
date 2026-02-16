@@ -116,14 +116,14 @@ def get_configuration() -> ConfigResponse:
 
 
 @router.put("/", response_model=ConfigResponse)
-def update_configuration(request: ConfigUpdateRequest) -> ConfigResponse:
+def update_configuration(request: dict[str, Any]) -> ConfigResponse:
     """Update application configuration.
 
-    Accepts partial updates. Only provided fields are updated.
+    Accepts full or partial configuration updates. Only provided fields are updated.
     Changes are persisted to config.yaml immediately.
 
     Args:
-        request: Configuration updates
+        request: Configuration updates (can be full config dict or partial updates)
 
     Returns:
         Updated configuration
@@ -136,38 +136,44 @@ def update_configuration(request: ConfigUpdateRequest) -> ConfigResponse:
         config_dict = load_config_from_yaml()
 
         # Update agent settings
-        if request.agent:
-            if "autonomy_level" in request.agent:
-                level = request.agent["autonomy_level"]
+        if "agent" in request and request["agent"]:
+            agent = request["agent"]
+            if "autonomy_level" in agent:
+                level = agent["autonomy_level"]
                 if level not in ["suggest", "auto_low", "auto", "full"]:
                     raise ValueError(
                         f"Invalid autonomy_level: {level}. Must be one of: suggest, auto_low, auto, full"
                     )
-            config_dict["agent"].update(request.agent)
+            config_dict["agent"].update(agent)
 
         # Update notification settings
-        if request.notifications:
-            config_dict["notifications"].update(request.notifications)
+        if "notifications" in request and request["notifications"]:
+            config_dict["notifications"].update(request["notifications"])
 
-        # Update LLM settings (validate non-empty API key if changed)
-        if request.llm:
-            if "api_key" in request.llm and not request.llm["api_key"]:
-                raise ValueError("api_key cannot be empty")
-            config_dict["llm"].update(request.llm)
+        # Update LLM settings (validate non-empty API key if explicitly changed)
+        if "llm" in request and request["llm"]:
+            llm = request["llm"]
+            # Only validate if api_key is explicitly being set to empty
+            # (not if it's just empty in the existing config)
+            if "api_key" in llm:
+                if llm["api_key"] == "" and config_dict["llm"].get("api_key", "") != "":
+                    # User is trying to clear the API key
+                    raise ValueError("api_key cannot be empty")
+            config_dict["llm"].update(llm)
 
         # Update database settings
-        if request.database:
-            config_dict["database"].update(request.database)
+        if "database" in request and request["database"]:
+            config_dict["database"].update(request["database"])
 
         # Update integration settings
-        if request.google:
-            config_dict["google"].update(request.google)
-        if request.slack:
-            config_dict["slack"].update(request.slack)
-        if request.granola:
-            config_dict["granola"].update(request.granola)
-        if request.voice:
-            config_dict["voice"].update(request.voice)
+        if "google" in request and request["google"]:
+            config_dict["google"].update(request["google"])
+        if "slack" in request and request["slack"]:
+            config_dict["slack"].update(request["slack"])
+        if "granola" in request and request["granola"]:
+            config_dict["granola"].update(request["granola"])
+        if "voice" in request and request["voice"]:
+            config_dict["voice"].update(request["voice"])
 
         # Save to YAML
         save_config_to_yaml(config_dict)
@@ -181,6 +187,6 @@ def update_configuration(request: ConfigUpdateRequest) -> ConfigResponse:
         return get_configuration()
 
     except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
+        raise HTTPException(status_code=422, detail=str(e))
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to update configuration: {str(e)}")
