@@ -313,3 +313,44 @@ def reset_config() -> None:
     """Reset the global configuration (useful for testing)."""
     global _config
     _config = None
+
+
+def load_config_from_yaml(config_path: str | Path | None = None) -> dict[str, Any]:
+    """Load raw configuration dictionary from YAML file.
+
+    Args:
+        config_path: Path to the YAML configuration file. Defaults to config.yaml in CWD.
+
+    Returns:
+        Raw configuration dictionary (not validated).
+    """
+    if config_path is None:
+        config_path = Path("config.yaml")
+    else:
+        config_path = Path(config_path)
+
+    config_data: dict[str, Any] = {}
+
+    if config_path.exists():
+        with open(config_path) as f:
+            loaded = yaml.safe_load(f)
+            if loaded:
+                config_data = loaded
+
+    return config_data
+
+
+def save_config_to_yaml(config_dict: dict[str, Any], config_path: str | Path | None = None) -> None:
+    """Save configuration dictionary to YAML file.
+
+    Args:
+        config_dict: Configuration dictionary to save.
+        config_path: Path to save to. Defaults to config.yaml in CWD.
+    """
+    if config_path is None:
+        config_path = Path("config.yaml")
+    else:
+        config_path = Path(config_path)
+
+    with open(config_path, "w") as f:
+        yaml.dump(config_dict, f, default_flow_style=False, sort_keys=False)

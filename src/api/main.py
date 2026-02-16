@@ -8,7 +8,7 @@ from sqlalchemy.orm import Session
 
 from src import __version__
 from src.api.dependencies import get_db_session
-from src.api.routes import agent_router, initiatives_router, status_router, tasks_router, voice_router
+from src.api.routes import agent_router, config_router, initiatives_router, status_router, tasks_router, voice_router
 from src.api.schemas import HealthResponse
 from src.models import init_db
 from src.services.agent_log_service import AgentLogService
@@ -36,6 +36,7 @@ app.include_router(initiatives_router, prefix="/api")
 app.include_router(status_router, prefix="/api")
 app.include_router(agent_router, prefix="/api")
 app.include_router(voice_router, prefix="/api")
+app.include_router(config_router, prefix="/api")
 
 
 @app.get("/health", response_model=HealthResponse, tags=["health"])
