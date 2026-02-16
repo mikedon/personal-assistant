@@ -40,6 +40,22 @@ except ImportError:
     logger.warning("pynput not available - global hotkey will not work")
 
 
+class QuickInputWindow(NSWindow):
+    """Custom window with proper keyboard event handling."""
+    
+    def canBecomeKeyWindow(self) -> bool:
+        """Window can become the key window (receive keyboard events)."""
+        return True
+    
+    def canBecomeMainWindow(self) -> bool:
+        """Window can become the main window."""
+        return True
+    
+    def becomeKeyWindow(self) -> None:
+        """Handle becoming key window."""
+        objc.super(QuickInputWindow, self).becomeKeyWindow()
+
+
 class QuickInputTextField(NSTextField):
     """Custom text field with improved keyboard handling."""
     
@@ -92,9 +108,9 @@ class QuickInputWindowController(NSWindowController):
         
         rect = NSMakeRect(x, y, width, height)
         
-        # Create window with appropriate style
+        # Create custom window with appropriate style
         style_mask = 1 + 2  # NSWindowStyleMaskTitled + NSWindowStyleMaskClosable
-        self.window = NSWindow.alloc().initWithContentRect_styleMask_backing_defer_(
+        self.window = QuickInputWindow.alloc().initWithContentRect_styleMask_backing_defer_(
             rect,
             style_mask,
             2,   # NSBackingStoreBuffered
@@ -106,6 +122,9 @@ class QuickInputWindowController(NSWindowController):
         self.window.setLevel_(10)  # Floating window level (NSFloatingWindowLevel)
         self.window.setOpaque_(True)
         self.window.setHasShadow_(True)
+        self.window.setReleasedWhenClosed_(False)  # Keep window in memory
+        self.window.setAcceptsMouseMovedEvents_(True)  # Accept mouse events
+        self.window.setCanHide_(False)  # Don't hide with app
         
         # Create content view
         content = NSView.alloc().initWithFrame_(NSZeroRect)
@@ -139,17 +158,23 @@ class QuickInputWindowController(NSWindowController):
         if self.text_field:
             self.text_field.setStringValue_("")
         
-        # Activate app and bring window to front
+        # Make window key and bring to front (MUST be in this order)
+        # 1. Activate the app first
         NSApp.activateIgnoringOtherApps_(True)
+        
+        # 2. Make window key (receives keyboard events)
         self.window.makeKeyAndOrderFront_(self)
+        
+        # 3. Ensure window is in front
         self.window.orderFrontRegardless()
         
-        # Set focus to text field
+        # 4. Set window as main window
+        NSApp.setMainWindow_(self.window)
+        
+        # 5. Set focus to text field
         if self.text_field:
-            # Make text field the first responder
+            # Give text field the focus
             self.window.makeFirstResponder_(self.text_field)
-            # Ensure text field is active
-            self.text_field.becomeFirstResponder()
 
     def submit_(self, sender=None) -> None:
         """Handle submit button or Enter key."""
