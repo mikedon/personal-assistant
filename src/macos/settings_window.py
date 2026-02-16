@@ -117,6 +117,7 @@ class SettingsWindowController(NSWindowController):
 
         # Add tabs
         self._add_general_tab()
+        self._add_api_tab()
         self._add_agent_tab()
         self._add_integrations_tab()
         self._add_llm_tab()
@@ -169,6 +170,52 @@ class SettingsWindowController(NSWindowController):
         slider.setDoubleValue_(float(self.current_config.get("notifications", {}).get("due_soon_hours", 4)))
         slider.setTag_(3)
         view.addSubview_(slider)
+
+        tab_item.setView_(view)
+        self.tab_view.addTabViewItem_(tab_item)
+
+    def _add_api_tab(self) -> None:
+        """Add API settings tab."""
+        tab_item = NSTabViewItem.alloc().initWithIdentifier_("API")
+        tab_item.setLabel_("API")
+
+        view = NSView.alloc().initWithFrame_(NSZeroRect)
+
+        # Backend URL
+        y_pos = 400
+        label = NSTextField.alloc().initWithFrame_(NSMakeRect(20, y_pos, 150, 20))
+        label.setStringValue_("Backend URL:")
+        label.setEditable_(False)
+        label.setBezeled_(False)
+        label.setDrawsBackground_(False)
+        view.addSubview_(label)
+
+        y_pos -= 30
+        url_field = NSTextField.alloc().initWithFrame_(NSMakeRect(20, y_pos, 500, 25))
+        # Store the current API URL in the UI
+        url_field.setStringValue_(self.api_url)
+        url_field.setEditable_(True)
+        url_field.setBezeled_(True)
+        url_field.setTag_(50)
+        view.addSubview_(url_field)
+
+        # Info text
+        y_pos -= 60
+        info_label = NSTextField.alloc().initWithFrame_(NSMakeRect(20, y_pos, 500, 50))
+        info_label.setStringValue_("Examples:\n  http://localhost:8000\n  http://192.168.1.100:8000")
+        info_label.setEditable_(False)
+        info_label.setBezeled_(False)
+        info_label.setDrawsBackground_(False)
+        view.addSubview_(info_label)
+
+        # Warning text
+        y_pos -= 80
+        warning_label = NSTextField.alloc().initWithFrame_(NSMakeRect(20, y_pos, 500, 60))
+        warning_label.setStringValue_("⚠ Changing this requires restarting the menu app.\nMake sure the API server is running at the specified URL before saving.")
+        warning_label.setEditable_(False)
+        warning_label.setBezeled_(False)
+        warning_label.setDrawsBackground_(False)
+        view.addSubview_(warning_label)
 
         tab_item.setView_(view)
         self.tab_view.addTabViewItem_(tab_item)
