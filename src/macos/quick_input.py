@@ -6,6 +6,7 @@ Supports quick commands (parse, voice, priority) and direct text input.
 
 import logging
 import threading
+import time
 from typing import Callable, Optional
 
 import httpx
@@ -77,11 +78,21 @@ class QuickInputTextField(NSTextField):
     
     def acceptsFirstResponder(self) -> bool:
         """Allow this field to receive keyboard focus."""
+        logger.debug("QuickInputTextField.acceptsFirstResponder called -> True")
         return True
     
     def becomeFirstResponder(self) -> bool:
         """Handle becoming first responder."""
-        return objc.super(QuickInputTextField, self).becomeFirstResponder()
+        logger.debug("QuickInputTextField.becomeFirstResponder called")
+        result = objc.super(QuickInputTextField, self).becomeFirstResponder()
+        logger.debug(f"QuickInputTextField.becomeFirstResponder result: {result}")
+        return result
+    
+    def keyDown_(self, event) -> None:
+        """Handle keyboard input at text field level."""
+        chars = event.characters()
+        logger.info(f"QuickInputTextField.keyDown_: '{chars}' (keyCode={event.keyCode()})")
+        objc.super(QuickInputTextField, self).keyDown_(event)
 
 
 class QuickInputWindowController(NSWindowController):
@@ -175,47 +186,67 @@ class QuickInputWindowController(NSWindowController):
             logger.info("Clearing text field")
             self.text_field.setStringValue_("")
         
-        # Make window key and bring to front (MUST be in this order)
-        # 1. Activate the app first
+        # Activation sequence
+        # 1. Activate app first
         logger.info("1. Activating app")
         NSApp.activateIgnoringOtherApps_(True)
         
-        # 2. Make window key (receives keyboard events)
+        # 2. Make window key and order front
         logger.info("2. Making window key and ordering front")
         self.window.makeKeyAndOrderFront_(self)
         
-        # 3. Ensure window is in front
+        # 3. Ensure it stays in front
         logger.info("3. Ordering window front regardless")
         self.window.orderFrontRegardless()
         
-        # 4. Set window as main window
-        logger.info("4. Setting as main window")
-        try:
-            NSApp.setMainWindow_(self.window)
-        except Exception as e:
-            logger.error(f"Error setting main window: {e}")
+        # 4. Explicitly set as key window
+        logger.info("4. Making window key")
+        self.window.makeKeyWindow()
         
-        # 5. Set focus to text field - critical for keyboard input
-        try:
-            if self.text_field:
-                logger.info("5. Making text field first responder")
-                # Make sure text field is visible and part of responder chain
-                result = self.window.makeFirstResponder_(self.text_field)
-                logger.info(f"makeFirstResponder result: {result}")
-                logger.info(f"Text field is first responder: {self.window.firstResponder() == self.text_field}")
-                logger.info(f"Window first responder: {self.window.firstResponder()}")
-            else:
-                logger.error("Text field is None!")
-        except Exception as e:
-            logger.error(f"Error setting first responder: {e}", exc_info=True)
+        logger.info(f"Window is key after activation: {self.window.isKeyWindow()}")
+        logger.info(f"Window is main after activation: {self.window.isMainWindow()}")
         
-        try:
-            logger.info(f"Window is key: {self.window.isKeyWindow()}")
-            logger.info(f"Window is main: {self.window.isMainWindow()}")
-        except Exception as e:
-            logger.error(f"Error getting window state: {e}")
+        # 5. Defer first responder focus to after window is displayed
+        logger.info("5. Deferring first responder focus")
+        self._set_first_responder_deferred()
         
         logger.info("===== SHOW WINDOW COMPLETE =====")
+    
+    def _set_first_responder_deferred(self) -> None:
+        """Set first responder on a background thread after window is displayed.
+        
+        IMPORTANT: NSTextField doesn't become the window's firstResponder directly.
+        Instead, we use selectText: which properly focuses the field editor (NSTextView).
+        This is the correct AppKit pattern for NSTextField keyboard focus.
+        """
+        def set_focus():
+            # Give the window time to become key and display
+            time.sleep(0.1)
+            
+            try:
+                if self.text_field and self.window:
+                    logger.info("=== SETTING TEXT FIELD FOCUS (using selectText) ===")
+                    logger.info(f"Window is key: {self.window.isKeyWindow()}")
+                    
+                    # The CORRECT way to focus an NSTextField:
+                    # Use selectText: which activates the field editor and positions cursor
+                    # This works even though NSTextField doesn't become the window's firstResponder
+                    self.text_field.selectText_(self)
+                    logger.info("Called selectText: on text field")
+                    
+                    # Verify the window has focus
+                    logger.info(f"Window is key AFTER selectText: {self.window.isKeyWindow()}")
+                    logger.info(f"Window first responder: {self.window.firstResponder()}")
+                    logger.info(f"First responder type: {type(self.window.firstResponder()).__name__}")
+                    
+                    logger.info("=== TEXT FIELD FOCUS SET ===")
+                else:
+                    logger.error("Text field or window is None!")
+            except Exception as e:
+                logger.error(f"Error setting text field focus: {e}", exc_info=True)
+        
+        thread = threading.Thread(target=set_focus, daemon=True)
+        thread.start()
 
     def submit_(self, sender=None) -> None:
         """Handle submit button or Enter key."""
