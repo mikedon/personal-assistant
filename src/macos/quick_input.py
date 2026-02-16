@@ -190,16 +190,31 @@ class QuickInputWindowController(NSWindowController):
         
         # 4. Set window as main window
         logger.info("4. Setting as main window")
-        NSApp.setMainWindow_(self.window)
+        try:
+            NSApp.setMainWindow_(self.window)
+        except Exception as e:
+            logger.error(f"Error setting main window: {e}")
         
-        # 5. Set focus to text field
-        if self.text_field:
-            logger.info("5. Making text field first responder")
-            self.window.makeFirstResponder_(self.text_field)
-            logger.info(f"Text field is first responder: {self.window.firstResponder() == self.text_field}")
+        # 5. Set focus to text field - critical for keyboard input
+        try:
+            if self.text_field:
+                logger.info("5. Making text field first responder")
+                # Make sure text field is visible and part of responder chain
+                result = self.window.makeFirstResponder_(self.text_field)
+                logger.info(f"makeFirstResponder result: {result}")
+                logger.info(f"Text field is first responder: {self.window.firstResponder() == self.text_field}")
+                logger.info(f"Window first responder: {self.window.firstResponder()}")
+            else:
+                logger.error("Text field is None!")
+        except Exception as e:
+            logger.error(f"Error setting first responder: {e}", exc_info=True)
         
-        logger.info(f"Window is key: {self.window.isKeyWindow()}")
-        logger.info(f"Window is main: {self.window.isMainWindow()}")
+        try:
+            logger.info(f"Window is key: {self.window.isKeyWindow()}")
+            logger.info(f"Window is main: {self.window.isMainWindow()}")
+        except Exception as e:
+            logger.error(f"Error getting window state: {e}")
+        
         logger.info("===== SHOW WINDOW COMPLETE =====")
 
     def submit_(self, sender=None) -> None:
