@@ -75,9 +75,18 @@ def show_input_dialog():
     
     root.mainloop()
     
-    # Output result as JSON
-    print(json.dumps(result))
+    # Output result as JSON to stdout
+    output = json.dumps(result)
+    print(output, file=sys.stdout)
+    sys.stdout.flush()
+    sys.exit(0 if result["submitted"] else 1)
 
 
 if __name__ == "__main__":
-    show_input_dialog()
+    try:
+        show_input_dialog()
+    except Exception as e:
+        # Output error as JSON
+        error_result = {"submitted": False, "text": "", "error": str(e)}
+        print(json.dumps(error_result), file=sys.stderr)
+        sys.exit(1)

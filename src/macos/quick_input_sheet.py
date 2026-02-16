@@ -69,17 +69,26 @@ class QuickInputSheet:
             
             logger.info(f"Dialog subprocess returned: {result.returncode}")
             
-            if result.returncode == 0 and result.stdout:
+            if result.stderr:
+                logger.warning(f"Dialog subprocess stderr: {result.stderr}")
+            
+            if result.stdout:
+                logger.info(f"Dialog stdout: {result.stdout.strip()}")
                 try:
                     data = json.loads(result.stdout.strip())
                     logger.info(f"Dialog result: {data}")
                     
                     if data.get("submitted") and data.get("text"):
+                        logger.info(f"Processing submitted text: {data['text']}")
                         self._process_input(data["text"])
-                except json.JSONDecodeError:
-                    logger.error(f"Failed to parse dialog output: {result.stdout}")
+                    else:
+                        logger.info(f"Dialog closed without submission: {data}")
+                except json.JSONDecodeError as e:
+                    logger.error(f"Failed to parse dialog output: {result.stdout} - {e}")
+            elif result.returncode == 0:
+                logger.info("Dialog closed without output")
             else:
-                logger.info("Dialog cancelled or closed")
+                logger.info(f"Dialog closed with error (returncode={result.returncode})")
         
         except subprocess.TimeoutExpired:
             logger.warning("Dialog subprocess timed out")
@@ -168,5 +177,6 @@ class QuickInputSheetManager:
     def show_quick_input(self) -> None:
         """Show the quick input sheet."""
         logger.info("Showing quick input sheet")
-        sheet = QuickInputSheet(api_url=self.api_url)
-        sheet.show(parent_window=self.parent_window)
+        # Keep reference to sheet so thread can complete
+        self.sheet = QuickInputSheet(api_url=self.api_url)
+        self.sheet.show(parent_window=self.parent_window)
