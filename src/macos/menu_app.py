@@ -27,6 +27,7 @@ from AppKit import (
 from Foundation import NSBundle, NSObject, NSTimer
 
 from src.macos.agent_status import AgentStatusManager
+from src.macos.quick_input import QuickInputManager
 from src.macos.settings_window import SettingsWindowController
 
 logger = logging.getLogger(__name__)
@@ -77,6 +78,11 @@ class MenuDelegate(NSObject):
         if self.app:
             self.app.show_settings(sender)
 
+    def showQuickInput_(self, sender):
+        """Show quick input popup action."""
+        if self.app:
+            self.app.show_quick_input(sender)
+
     def quitApp_(self, sender):
         """Quit app action."""
         if self.app:
@@ -118,6 +124,9 @@ class TaskMenuApp(NSObject):
         
         # Settings window controller
         self.settings_window = None
+        
+        # Quick input manager
+        self.quick_input_manager = None
         return self
 
     @objc.python_method
@@ -132,6 +141,8 @@ class TaskMenuApp(NSObject):
         self.refresh_interval = refresh_interval
         self.agent_manager = AgentStatusManager(api_url=api_url)
         self.settings_window = SettingsWindowController.alloc().init(api_url=api_url)
+        self.quick_input_manager = QuickInputManager(api_url=api_url)
+        self.quick_input_manager.setup()
 
     def setup_menu_bar(self) -> None:
         """Set up the menu bar item and menu."""
@@ -287,7 +298,17 @@ class TaskMenuApp(NSObject):
 
         self.menu.removeAllItems()
 
-        # --- Settings Section ---
+        # --- Quick Input Section ---
+        quick_input_item = NSMenuItem.alloc().initWithTitle_action_keyEquivalent_(
+            "✏ Quick Input", None, "a"
+        )
+        quick_input_item.setKeyEquivalentModifierMask_(0x180000)  # Cmd+Shift
+        quick_input_item.setTarget_(self.menu_delegate)
+        quick_input_item.setAction_("showQuickInput:")
+        quick_input_item.setEnabled_(True)
+        self.menu.addItem_(quick_input_item)
+
+        # Settings
         settings_item = NSMenuItem.alloc().initWithTitle_action_keyEquivalent_(
             "⚙ Settings", None, ","
         )
@@ -297,7 +318,7 @@ class TaskMenuApp(NSObject):
         settings_item.setEnabled_(True)
         self.menu.addItem_(settings_item)
 
-        # Separator after settings
+        # Separator after quick input/settings
         self.menu.addItem_(NSMenuItem.separatorItem())
 
         # --- Agent Status Section ---
@@ -544,6 +565,15 @@ class TaskMenuApp(NSObject):
         """
         if self.settings_window:
             self.settings_window.show_window()
+
+    def show_quick_input(self, sender: Any = None) -> None:
+        """Show quick input popup.
+
+        Args:
+            sender: Menu item (unused)
+        """
+        if self.quick_input_manager:
+            self.quick_input_manager.show_popup()
 
     @objc.python_method
     def _start_agent_thread(self) -> None:
