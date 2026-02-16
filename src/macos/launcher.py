@@ -6,11 +6,24 @@ Handles:
 - Managing process lifecycle
 """
 
+import logging
 import subprocess
 import sys
 import time
 
 import httpx
+
+# Configure logging for debugging
+logging.basicConfig(
+    level=logging.DEBUG,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.StreamHandler(sys.stderr),
+        logging.FileHandler('/tmp/personal_assistant_debug.log')
+    ]
+)
+
+logger = logging.getLogger(__name__)
 
 
 def check_api_running(api_url: str = "http://localhost:8000", timeout: float = 2.0) -> bool:

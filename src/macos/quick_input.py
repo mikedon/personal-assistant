@@ -45,15 +45,29 @@ class QuickInputWindow(NSWindow):
     
     def canBecomeKeyWindow(self) -> bool:
         """Window can become the key window (receive keyboard events)."""
+        logger.debug("canBecomeKeyWindow called")
         return True
     
     def canBecomeMainWindow(self) -> bool:
         """Window can become the main window."""
+        logger.debug("canBecomeMainWindow called")
         return True
     
     def becomeKeyWindow(self) -> None:
         """Handle becoming key window."""
+        logger.debug("becomeKeyWindow called")
         objc.super(QuickInputWindow, self).becomeKeyWindow()
+    
+    def mouseDown_(self, event) -> None:
+        """Handle mouse down event."""
+        logger.debug(f"Mouse down event: {event}")
+        objc.super(QuickInputWindow, self).mouseDown_(event)
+    
+    def keyDown_(self, event) -> None:
+        """Handle keyboard event."""
+        chars = event.characters()
+        logger.debug(f"Key down event: {chars} (code: {event.keyCode()})")
+        objc.super(QuickInputWindow, self).keyDown_(event)
 
 
 class QuickInputTextField(NSTextField):
@@ -151,30 +165,42 @@ class QuickInputWindowController(NSWindowController):
 
     def show_window(self) -> None:
         """Show the quick input window and focus text field."""
+        logger.info("===== SHOW WINDOW CALLED =====")
         if self.window is None:
+            logger.info("Creating window...")
             self.create_window()
         
         # Clear text field
         if self.text_field:
+            logger.info("Clearing text field")
             self.text_field.setStringValue_("")
         
         # Make window key and bring to front (MUST be in this order)
         # 1. Activate the app first
+        logger.info("1. Activating app")
         NSApp.activateIgnoringOtherApps_(True)
         
         # 2. Make window key (receives keyboard events)
+        logger.info("2. Making window key and ordering front")
         self.window.makeKeyAndOrderFront_(self)
         
         # 3. Ensure window is in front
+        logger.info("3. Ordering window front regardless")
         self.window.orderFrontRegardless()
         
         # 4. Set window as main window
+        logger.info("4. Setting as main window")
         NSApp.setMainWindow_(self.window)
         
         # 5. Set focus to text field
         if self.text_field:
-            # Give text field the focus
+            logger.info("5. Making text field first responder")
             self.window.makeFirstResponder_(self.text_field)
+            logger.info(f"Text field is first responder: {self.window.firstResponder() == self.text_field}")
+        
+        logger.info(f"Window is key: {self.window.isKeyWindow()}")
+        logger.info(f"Window is main: {self.window.isMainWindow()}")
+        logger.info("===== SHOW WINDOW COMPLETE =====")
 
     def submit_(self, sender=None) -> None:
         """Handle submit button or Enter key."""
