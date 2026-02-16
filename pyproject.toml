@@ -36,6 +36,7 @@ dev = [
 ]
 macos = [
     "pyobjc>=10.0",
+    "pynput>=1.7.6",
 ]
 
 [project.scripts]
