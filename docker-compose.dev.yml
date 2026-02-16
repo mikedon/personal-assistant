@@ -1,0 +1,56 @@
+# Development overrides for docker-compose.yml
+# Usage: docker-compose -f docker-compose.yml -f docker-compose.dev.yml up
+
+services:
+  # API Service - Development Configuration
+  api:
+    build:
+      context: .
+      target: development
+    command: ["pa", "server", "--host", "0.0.0.0", "--port", "8000", "--reload"]
+    environment:
+      PA_DATABASE_URL: sqlite:///data/tasks.db
+      PA_LLM_API_KEY: ${PA_LLM_API_KEY:-}
+      PA_GOOGLE_CLIENT_ID: ${PA_GOOGLE_CLIENT_ID:-}
+      PA_GOOGLE_CLIENT_SECRET: ${PA_GOOGLE_CLIENT_SECRET:-}
+    secrets: []
+    depends_on: {}
+    volumes:
+      - ./src:/app/src
+      - ./tests:/app/tests
+      - ./config.yaml:/app/config.yaml
+      - sqlite_data:/app/data
+
+  # Agent Service - Development Configuration
+  agent:
+    build:
+      context: .
+      target: development
+    command: ["pa", "agent", "start", "--foreground"]
+    environment:
+      PA_DATABASE_URL: sqlite:///data/tasks.db
+      PA_LLM_API_KEY: ${PA_LLM_API_KEY:-}
+      PA_GOOGLE_CLIENT_ID: ${PA_GOOGLE_CLIENT_ID:-}
+      PA_GOOGLE_CLIENT_SECRET: ${PA_GOOGLE_CLIENT_SECRET:-}
+    secrets: []
+    depends_on:
+      api:
+        condition: service_started
+    networks:
+      - pa-network
+    volumes:
+      - ./src:/app/src
+      - ./config.yaml:/app/config.yaml
+      - sqlite_data:/app/data
+    restart: unless-stopped
+
+  # Disable production services in development
+  db:
+    profiles: ["production-only"]
+
+  migration:
+    profiles: ["production-only"]
+
+volumes:
+  sqlite_data:
+    driver: local

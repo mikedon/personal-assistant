@@ -62,3 +62,11 @@ token.json
 
 # Test run directory
 testrun/
+
+# Docker secrets (keep .example files)
+secrets/*
+!secrets/.gitkeep
+!secrets/*.example
+
+# Docker volumes
+docker-volumes/
