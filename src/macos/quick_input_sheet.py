@@ -1,79 +1,97 @@
-"""Modal sheet-based quick input dialog with proper keyboard focus.
+"""Quick input dialog for task creation in menu bar app.
 
-Uses NSAlert-style sheets which properly handle keyboard input in menu bar apps.
-Sheets are modal dialogs that appear attached to a window and automatically
-become key, receiving keyboard events reliably.
+Uses subprocess with tkinter dialog to avoid blocking issues with NSAlert
+in menu bar app context.
 """
 
+import json
 import logging
+import subprocess
+import sys
 import threading
+from pathlib import Path
 from typing import Callable, Optional
 
 import httpx
-import objc
-from AppKit import (
-    NSApp,
-    NSAlert,
-    NSTextField,
-    NSSecureTextField,
-)
-from Foundation import NSMakeRect, NSObject
 
 from src.macos.command_parser import CommandParser, ParsedCommand
 
 logger = logging.getLogger(__name__)
 
 
-class QuickInputDialogDelegate(NSObject):
-    """Delegate for managing the quick input alert dialog."""
+class QuickInputSheet:
+    """Dialog for task creation using subprocess + tkinter.
     
-    def init(self, on_submit=None, api_url="http://localhost:8000"):
-        """Initialize the delegate."""
-        self = objc.super(QuickInputDialogDelegate, self).init()
-        if self is None:
-            return None
-        self.on_submit = on_submit
+    This implementation uses a subprocess to show a tkinter dialog, which:
+    - Works reliably without blocking the menu bar app
+    - Properly handles keyboard input
+    - Doesn't require complex AppKit event loop management
+    """
+    
+    def __init__(self, api_url: str = "http://localhost:8000", on_submit: Optional[Callable] = None):
+        """Initialize the quick input dialog.
+        
+        Args:
+            api_url: Base URL of the API
+            on_submit: Callback when user submits (optional for testing)
+        """
         self.api_url = api_url
+        self.on_submit = on_submit
         self.client = httpx.Client(timeout=10.0)
-        return self
     
-    def show_dialog(self):
-        """Show the input dialog."""
+    def show(self, parent_window=None) -> None:
+        """Show the quick input dialog.
+        
+        Args:
+            parent_window: Parent window (unused, for API compatibility)
+        """
+        logger.info("Showing quick input dialog")
+        
+        # Run dialog in background thread to avoid blocking menu bar
+        thread = threading.Thread(target=self._show_dialog_in_subprocess, daemon=True)
+        thread.start()
+    
+    def _show_dialog_in_subprocess(self) -> None:
+        """Show dialog in subprocess."""
         try:
-            logger.info("Creating NSAlert")
+            # Get path to the dialog script
+            dialog_script = Path(__file__).parent / "quick_input_dialog.py"
             
-            # Create alert
-            alert = NSAlert.alloc().init()
-            alert.setMessageText_("Quick Task Input")
-            alert.setInformativeText_("Enter a task or command:")
+            logger.info(f"Launching dialog subprocess: {dialog_script}")
             
-            # Add input field
-            self.input_field = NSTextField.alloc().initWithFrame_(NSMakeRect(0, 0, 300, 24))
-            self.input_field.setPlaceholderString_("Type task or 'parse <text>', 'voice', 'priority <level>'")
-            alert.setAccessoryView_(self.input_field)
+            # Run the dialog as a subprocess
+            result = subprocess.run(
+                [sys.executable, str(dialog_script)],
+                capture_output=True,
+                text=True,
+                timeout=60.0  # 1 minute timeout
+            )
             
-            # Add buttons
-            alert.addButtonWithTitle_("Submit")
-            alert.addButtonWithTitle_("Cancel")
+            logger.info(f"Dialog subprocess returned: {result.returncode}")
             
-            logger.info("Alert created, showing modal dialog...")
-            
-            # Show as modal dialog
-            response = alert.runModal()
-            logger.info(f"Modal dialog response: {response}")
-            
-            if response == 1000:  # Submit button (first button)
-                text = self.input_field.stringValue()
-                logger.info(f"User submitted: {text}")
-                self._process_input(text)
+            if result.returncode == 0 and result.stdout:
+                try:
+                    data = json.loads(result.stdout.strip())
+                    logger.info(f"Dialog result: {data}")
+                    
+                    if data.get("submitted") and data.get("text"):
+                        self._process_input(data["text"])
+                except json.JSONDecodeError:
+                    logger.error(f"Failed to parse dialog output: {result.stdout}")
             else:
-                logger.info("User cancelled dialog")
-                
+                logger.info("Dialog cancelled or closed")
+        
+        except subprocess.TimeoutExpired:
+            logger.warning("Dialog subprocess timed out")
         except Exception as e:
-            logger.error(f"Error showing quick input dialog: {e}", exc_info=True)
+            logger.error(f"Error showing dialog: {e}", exc_info=True)
     
-    def _process_input(self, text):
-        """Process user input."""
+    def _process_input(self, text: str) -> None:
+        """Process user input.
+        
+        Args:
+            text: User-entered text
+        """
         if not text or not text.strip():
             logger.info("Empty input, ignoring")
             return
@@ -91,8 +109,12 @@ class QuickInputDialogDelegate(NSObject):
             # Default: submit to API
             self._submit_to_api(parsed)
     
-    def _submit_to_api(self, parsed):
-        """Submit parsed command to API."""
+    def _submit_to_api(self, parsed: ParsedCommand) -> None:
+        """Submit parsed command to API.
+        
+        Args:
+            parsed: Parsed command from input
+        """
         try:
             if parsed.command_type == "voice":
                 logger.info("Voice command received (not yet implemented)")
@@ -112,52 +134,13 @@ class QuickInputDialogDelegate(NSObject):
             response = self.client.post(f"{self.api_url}/api/tasks", json=task_data)
             response.raise_for_status()
             logger.info(f"Task created: {response.json()}")
-            
+        
         except Exception as e:
             logger.error(f"Failed to create task: {e}")
-
-
-class QuickInputSheet:
-    """Modal sheet-based input dialog for task creation.
-    
-    This implementation uses NSAlert with a text field, which:
-    - Automatically becomes key when displayed
-    - Properly handles keyboard input
-    - Works reliably in menu bar app context
-    - Provides native macOS appearance and behavior
-    """
-    
-    def __init__(self, api_url: str = "http://localhost:8000", on_submit: Optional[Callable] = None):
-        """Initialize the quick input sheet.
-        
-        Args:
-            api_url: Base URL of the API
-            on_submit: Callback when user submits (optional for testing)
-        """
-        self.api_url = api_url
-        self.on_submit = on_submit
-        self.delegate = None
-    
-    def show(self, parent_window=None) -> None:
-        """Show the quick input dialog as a modal sheet.
-        
-        Args:
-            parent_window: Parent window to attach sheet to (optional)
-        """
-        logger.info("Showing quick input sheet")
-        
-        # Create and keep a reference to the delegate (NSObject)
-        # It needs to persist for the duration of the dialog
-        self.delegate = QuickInputDialogDelegate.alloc().init(self.on_submit, self.api_url)
-        
-        # Show the dialog
-        self.delegate.show_dialog()
     
     def close(self) -> None:
         """Clean up resources."""
-        if self.delegate and hasattr(self.delegate, 'client'):
-            self.delegate.client.close()
-        self.delegate = None
+        self.client.close()
 
 
 class QuickInputSheetManager:
