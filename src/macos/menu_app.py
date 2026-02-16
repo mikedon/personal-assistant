@@ -27,7 +27,7 @@ from AppKit import (
 from Foundation import NSBundle, NSObject, NSTimer
 
 from src.macos.agent_status import AgentStatusManager
-from src.macos.quick_input import QuickInputManager
+from src.macos.quick_input_sheet import QuickInputSheetManager
 from src.macos.settings_window import SettingsWindowController
 
 logger = logging.getLogger(__name__)
@@ -125,8 +125,8 @@ class TaskMenuApp(NSObject):
         # Settings window controller
         self.settings_window = None
         
-        # Quick input manager
-        self.quick_input_manager = None
+        # Quick input sheet manager
+        self.quick_input_sheet_manager = None
         return self
 
     @objc.python_method
@@ -141,8 +141,8 @@ class TaskMenuApp(NSObject):
         self.refresh_interval = refresh_interval
         self.agent_manager = AgentStatusManager(api_url=api_url)
         self.settings_window = SettingsWindowController.alloc().init(api_url=api_url)
-        self.quick_input_manager = QuickInputManager(api_url=api_url)
-        self.quick_input_manager.setup()
+        self.quick_input_sheet_manager = QuickInputSheetManager(api_url=api_url)
+        self.quick_input_sheet_manager.setup()
 
     def setup_menu_bar(self) -> None:
         """Set up the menu bar item and menu."""
@@ -567,13 +567,13 @@ class TaskMenuApp(NSObject):
             self.settings_window.show_window()
 
     def show_quick_input(self, sender: Any = None) -> None:
-        """Show quick input popup.
+        """Show quick input dialog.
 
         Args:
             sender: Menu item (unused)
         """
-        if self.quick_input_manager:
-            self.quick_input_manager.show_popup()
+        if self.quick_input_sheet_manager:
+            self.quick_input_sheet_manager.show_quick_input()
 
     @objc.python_method
     def _start_agent_thread(self) -> None:

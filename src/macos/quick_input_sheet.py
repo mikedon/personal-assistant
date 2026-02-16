@@ -53,15 +53,15 @@ class QuickInputSheet:
         """
         logger.info("Showing quick input sheet")
         
-        # Dispatch to main thread without blocking using performSelector
-        # This allows the menu bar app to stay responsive
+        # Important: Must use performSelectorOnMainThread since NSAlert must run on main thread
+        # Using waitUntilDone=False lets the menu bar stay responsive
         NSApp.performSelectorOnMainThread_withObject_waitUntilDone_(
-            "_showQuickInputDialog:",
+            "_showQuickInputDialogOnMainThread:",
             self,
-            False  # Don't wait - let it run asynchronously
+            False
         )
     
-    def _showQuickInputDialog_(self) -> None:
+    def _showQuickInputDialogOnMainThread_(self, unused=None) -> None:
         """Show the dialog on the main thread (called via performSelector)."""
         try:
             logger.info("Creating alert on main thread")
