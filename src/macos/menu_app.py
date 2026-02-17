@@ -84,6 +84,12 @@ class MenuDelegate(NSObject):
         if self.app:
             self.app.show_quick_input(sender)
 
+    def taskItemClicked_(self, sender):
+        """Task item click action."""
+        if self.app and sender:
+            task_id = sender.representedObject()
+            self.app.task_item_clicked_with_id(task_id)
+
     def quitApp_(self, sender):
         """Quit app action."""
         if self.app:
@@ -435,14 +441,10 @@ class TaskMenuApp(NSObject):
                 item = NSMenuItem.alloc().initWithTitle_action_keyEquivalent_(
                     menu_title, None, ""
                 )
-                # Create a closure that captures task_id
-                def make_task_handler(tid):
-                    def handler(sender=None):
-                        self.task_item_clicked_with_id(tid)
-                    return handler
-
-                item.setTarget_(self)
-                item.setAction_(objc.selector(make_task_handler(task_id), signature=b"v@:"))
+                # Store task_id in the menu item's represented object so we can retrieve it
+                item.setRepresentedObject_(task_id)
+                item.setTarget_(self.menu_delegate)
+                item.setAction_("taskItemClicked:")
                 item.setEnabled_(True)
                 self.menu.addItem_(item)
 
