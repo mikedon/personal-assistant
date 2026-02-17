@@ -101,6 +101,14 @@ def show_task_details_modal(task_data: Dict[str, Any]) -> Dict[str, Any]:
         """Close modal without action."""
         root.destroy()
     
+    def on_complete_key(event=None):
+        """Handle keyboard shortcut to complete task (Cmd+E)."""
+        on_complete()
+    
+    def on_priority_key(event=None):
+        """Handle keyboard shortcut to change priority (Cmd+P)."""
+        priority_combo.focus_set()
+    
     # Create window
     root = tk.Tk()
     root.title(f"Task: {task_data.get('title', 'Untitled')}")
@@ -298,8 +306,19 @@ def show_task_details_modal(task_data: Dict[str, Any]) -> Dict[str, Any]:
     
     ttk.Button(bottom_buttons, text="Close", command=on_close).pack(side=tk.RIGHT)
     
-    # Bind Escape to close
+    # Bind keyboard shortcuts
     root.bind('<Escape>', lambda e: on_close())
+    # Cmd+E to complete (Cmd is Alt on macOS in tkinter)
+    root.bind('<Control-e>', on_complete_key)
+    # Cmd+P to focus priority
+    root.bind('<Control-p>', on_priority_key)
+    
+    # Status bar at bottom
+    status_frame = ttk.Frame(root)
+    status_frame.pack(fill=tk.X, padx=10, pady=(5, 10))
+    
+    status_label = ttk.Label(status_frame, text="Ready", font=('Arial', 8), foreground='gray')
+    status_label.pack(side=tk.LEFT)
     
     # Center window on screen
     root.update_idletasks()
@@ -307,6 +326,8 @@ def show_task_details_modal(task_data: Dict[str, Any]) -> Dict[str, Any]:
     y = (root.winfo_screenheight() // 2) - (root.winfo_height() // 2)
     root.geometry(f'+{x}+{y}')
     
+    # Focus window
+    root.focus_set()
     root.mainloop()
     
     return result
