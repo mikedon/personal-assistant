@@ -29,6 +29,7 @@ from Foundation import NSBundle, NSObject, NSTimer
 from src.macos.agent_status import AgentStatusManager
 from src.macos.quick_input_sheet import QuickInputSheetManager
 from src.macos.settings_window import SettingsWindowController
+from src.macos.task_details_sheet import TaskDetailsModalManager
 
 logger = logging.getLogger(__name__)
 
@@ -127,6 +128,9 @@ class TaskMenuApp(NSObject):
         
         # Quick input sheet manager
         self.quick_input_sheet_manager = None
+        
+        # Task details modal manager
+        self.task_details_modal_manager = None
         return self
 
     @objc.python_method
@@ -143,6 +147,7 @@ class TaskMenuApp(NSObject):
         self.settings_window = SettingsWindowController.alloc().init(api_url=api_url)
         self.quick_input_sheet_manager = QuickInputSheetManager(api_url=api_url)
         self.quick_input_sheet_manager.setup()
+        self.task_details_modal_manager = TaskDetailsModalManager(api_url=api_url)
 
     def setup_menu_bar(self) -> None:
         """Set up the menu bar item and menu."""
@@ -624,6 +629,13 @@ class TaskMenuApp(NSObject):
             task_id: ID of the clicked task
         """
         logger.debug(f"Task clicked: {task_id}")
+        
+        # Show task details modal
+        if self.task_details_modal_manager:
+            self.task_details_modal_manager.show_task_details(task_id)
+            # Refresh menu after modal closes in case task was updated
+            # Use short delay to ensure modal is fully closed
+            threading.Timer(0.5, self.refresh_tasks).start()
 
     def open_dashboard(self, sender: Any = None) -> None:
         """Open the dashboard in a browser.
