@@ -156,10 +156,10 @@ def show_task_details_modal(task_data: Dict[str, Any]) -> Dict[str, Any]:
     # Description
     if task_data.get("description"):
         ttk.Label(scrollable_frame, text="Description:", font=('Arial', 10, 'bold')).pack(anchor=tk.W)
-        desc_text = tk.Text(scrollable_frame, height=3, width=60, wrap=tk.WORD, bg='#f5f5f5')
+        desc_text = tk.Text(scrollable_frame, height=3, width=60, wrap=tk.WORD, bg='#f5f5f5', fg='#333333', font=('Arial', 9))
         desc_text.insert(tk.END, task_data.get("description", ""))
         desc_text.config(state=tk.DISABLED)
-        desc_text.pack(anchor=tk.W, pady=(0, 10))
+        desc_text.pack(anchor=tk.W, pady=(0, 10), fill=tk.X)
     
     # Task details grid
     details_frame = ttk.Frame(scrollable_frame)
