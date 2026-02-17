@@ -107,45 +107,39 @@ class QuickInputSheet:
         
         logger.info(f"Processing input: {text}")
         
-        # Parse command
-        parsed = CommandParser.parse(text)
-        logger.info(f"Parsed command: {parsed}")
-        
-        # Call submission callback if provided
-        if self.on_submit:
-            self.on_submit(parsed)
-        else:
-            # Default: submit to API
-            self._submit_to_api(parsed)
+        # Use API parse endpoint for NLP task extraction
+        self._submit_to_api(text)
     
-    def _submit_to_api(self, parsed: ParsedCommand) -> None:
-        """Submit parsed command to API.
+    def _submit_to_api(self, text: str) -> None:
+        """Submit text to API parse endpoint for task creation.
         
         Args:
-            parsed: Parsed command from input
+            text: User-entered text to parse and create tasks from
         """
         try:
-            if parsed.command_type == "voice":
-                logger.info("Voice command received (not yet implemented)")
-                return
+            logger.info(f"Sending to parse API: {text}")
             
-            # Prepare task data
-            task_data = {
-                "title": parsed.text,
-                "priority": parsed.priority or "medium",
-            }
-            
-            if parsed.command_type == "parse":
-                task_data["description"] = parsed.text
-                task_data["parse_natural_language"] = True
-            
-            # Submit to API
-            response = self.client.post(f"{self.api_url}/api/tasks", json=task_data)
+            # Call the parse endpoint which uses LLM to extract tasks
+            response = self.client.post(
+                f"{self.api_url}/api/tasks/parse",
+                json={"text": text}
+            )
             response.raise_for_status()
-            logger.info(f"Task created: {response.json()}")
+            
+            result = response.json()
+            logger.info(f"Parse response: {result}")
+            
+            # Log created tasks
+            created_count = len(result.get("created_tasks", []))
+            if created_count > 0:
+                logger.info(f"Successfully created {created_count} task(s) from input")
+                for task in result.get("created_tasks", []):
+                    logger.info(f"  - {task['title']} (priority: {task['priority']})")
+            else:
+                logger.info("No tasks were created from the input")
         
         except Exception as e:
-            logger.error(f"Failed to create task: {e}")
+            logger.error(f"Failed to parse and create tasks: {e}", exc_info=True)
     
     def close(self) -> None:
         """Clean up resources."""

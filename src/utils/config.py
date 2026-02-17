@@ -309,6 +309,19 @@ def get_config() -> Config:
     return _config
 
 
+def set_config(config: Config) -> None:
+    """Set the global configuration instance.
+    
+    Used when configuration is loaded from a specific path that should be
+    used globally (e.g., via CLI -c option).
+    
+    Args:
+        config: Configuration instance to set globally
+    """
+    global _config
+    _config = config
+
+
 def reset_config() -> None:
     """Reset the global configuration (useful for testing)."""
     global _config

@@ -4,6 +4,7 @@ from datetime import UTC, datetime
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from src.api.schemas import (
@@ -19,6 +20,31 @@ from src.api.schemas import (
 )
 from src.models import Task, TaskPriority, TaskSource, TaskStatus, get_db
 from src.services.task_service import TaskService
+from src.services.llm_service import LLMService
+from src.utils.config import get_config
+from src.services.initiative_service import InitiativeService
+
+
+class ParseTaskRequest(BaseModel):
+    """Request to parse natural language text into tasks."""
+    text: str
+    
+
+class ParsedTaskInfo(BaseModel):
+    """Information about a parsed task."""
+    title: str
+    description: str | None = None
+    priority: str
+    confidence: float
+    due_date: datetime | None = None
+    tags: list[str] | None = None
+    suggested_initiative_id: int | None = None
+
+
+class ParseTaskResponse(BaseModel):
+    """Response from parsing natural language text."""
+    parsed_tasks: list[ParsedTaskInfo]
+    created_tasks: list[TaskResponse] = []
 
 router = APIRouter(prefix="/tasks", tags=["tasks"])
 
@@ -182,6 +208,106 @@ def delete_task(
     if not task:
         raise HTTPException(status_code=404, detail="Task not found")
     service.delete_task(task)
+
+
+@router.post("/parse", response_model=ParseTaskResponse)
+def parse_text_to_tasks(
+    request: ParseTaskRequest,
+    db: Session = Depends(get_db),
+    service: Annotated[TaskService, Depends(get_task_service)] = None,
+) -> ParseTaskResponse:
+    """Parse natural language text to extract and create tasks.
+    
+    Uses LLM to analyze text and extract task details including:
+    - Title
+    - Priority
+    - Due date
+    - Tags
+    - Suggested initiative
+    
+    Then automatically creates the extracted tasks.
+    """
+    config = get_config()
+    
+    # Check if LLM is configured
+    if not config.llm.api_key:
+        raise HTTPException(
+            status_code=400,
+            detail="LLM API key not configured"
+        )
+    
+    try:
+        # Initialize LLM service
+        llm_service = LLMService(config.llm)
+        
+        # Get active initiatives for LLM context
+        initiatives_for_llm = []
+        initiative_service = InitiativeService(db)
+        active_initiatives = initiative_service.get_active_initiatives()
+        initiatives_for_llm = [
+            {
+                "id": init.id,
+                "title": init.title,
+                "priority": init.priority.value,
+                "description": init.description,
+            }
+            for init in active_initiatives
+        ]
+        
+        # Extract tasks from text with initiative context
+        import asyncio
+        extracted_tasks = asyncio.run(
+            llm_service.extract_tasks_from_text(
+                text=request.text,
+                source="api",
+                context="User submitted this text via API to create tasks.",
+                initiatives=initiatives_for_llm if initiatives_for_llm else None,
+            )
+        )
+        
+        # Convert extracted tasks to response format
+        parsed_tasks = [
+            ParsedTaskInfo(
+                title=task.title,
+                description=task.description,
+                priority=task.priority,
+                confidence=task.confidence,
+                due_date=task.due_date,
+                tags=task.tags,
+                suggested_initiative_id=task.suggested_initiative_id,
+            )
+            for task in extracted_tasks
+        ]
+        
+        # Create tasks automatically
+        created_tasks = []
+        for extracted in extracted_tasks:
+            initiative_id = None
+            if extracted.suggested_initiative_id:
+                initiative_id = extracted.suggested_initiative_id
+            
+            task = service.create_task(
+                title=extracted.title,
+                description=extracted.description,
+                priority=TaskPriority(extracted.priority),
+                source=TaskSource.MANUAL,
+                due_date=extracted.due_date,
+                tags=extracted.tags,
+                document_links=extracted.document_links,
+                initiative_id=initiative_id,
+            )
+            created_tasks.append(_task_to_response(task))
+        
+        return ParseTaskResponse(
+            parsed_tasks=parsed_tasks,
+            created_tasks=created_tasks,
+        )
+        
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to parse tasks: {str(e)}"
+        )
 
 
 # Batch Operations
