@@ -250,19 +250,6 @@ class TaskDashboardApp(App):
         except Exception as e:
             self.notify(f"Error deleting task: {e}", severity="error")
 
-    def on_task_details_modal_open_links(self, message) -> None:
-        """Handle open links message from details modal."""
-        links = message.links
-        if not links:
-            self.notify("Task has no document links", severity="warning")
-            return
-
-        # Show document links modal
-        from src.tui.widgets.document_links import DocumentLinksModal
-        modal = DocumentLinksModal(links)
-        self.mount(modal)
-        self.notify("Document Links: Press 1-5 to open", severity="information")
-
     def action_toggle_polling(self) -> None:
         """Toggle auto-polling on/off (Phase 3)."""
         if self.agent_status:

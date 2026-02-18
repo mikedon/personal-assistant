@@ -1,5 +1,8 @@
 """Task details modal widget."""
 
+import platform
+import subprocess
+
 from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical
@@ -52,6 +55,11 @@ class TaskDetailsModal(Static):
 
     BINDINGS = [
         Binding("escape", "close", "Close"),
+        Binding("1", "open_link_0", "Open 1"),
+        Binding("2", "open_link_1", "Open 2"),
+        Binding("3", "open_link_2", "Open 3"),
+        Binding("4", "open_link_3", "Open 4"),
+        Binding("5", "open_link_4", "Open 5"),
     ]
 
     def __init__(self, task: Task | dict, name: str | None = None, id: str | None = None):
@@ -59,6 +67,11 @@ class TaskDetailsModal(Static):
         super().__init__(name=name, id=id)
         self._task_data = task
         self.task_id = task.id if isinstance(task, Task) else task.get('id')
+        self.links = (
+            task.get('document_links', [])
+            if isinstance(task, dict)
+            else task.get_document_links_list()
+        )
 
     def compose(self) -> ComposeResult:
         """Compose the modal."""
@@ -162,35 +175,69 @@ class TaskDetailsModal(Static):
 
             # Document links
             if links:
-                yield Label("[bold dim]Document Links[/bold dim]")
-                for link in links:
-                    link_display = f"  • {link[:60]}..." if len(link) > 60 else f"  • {link}"
+                msg = "[bold dim]Document Links (Press 1-5 to open)[/bold dim]"
+                yield Label(msg)
+                for i, link in enumerate(links, 1):
+                    if len(link) > 55:
+                        link_display = f"  [{i}] {link[:55]}..."
+                    else:
+                        link_display = f"  [{i}] {link}"
                     yield Label(link_display, classes="info-section")
 
             # Buttons
             with Horizontal(classes="buttons"):
                 yield Button("Complete", id="btn-complete", variant="primary")
-                if links:
-                    yield Button("Open Links", id="btn-open-links", variant="default")
                 yield Button("Delete", id="btn-delete", variant="error")
                 yield Button("Close", id="btn-close", variant="default")
+
+    def on_mount(self) -> None:
+        """Set up the modal when mounted."""
+        # Focus the widget so it can receive key events
+        self.focus()
 
     def action_close(self) -> None:
         """Close the modal."""
         self.display = False
 
+    def action_open_link_0(self) -> None:
+        """Open link 1."""
+        self._open_link(0)
+
+    def action_open_link_1(self) -> None:
+        """Open link 2."""
+        self._open_link(1)
+
+    def action_open_link_2(self) -> None:
+        """Open link 3."""
+        self._open_link(2)
+
+    def action_open_link_3(self) -> None:
+        """Open link 4."""
+        self._open_link(3)
+
+    def action_open_link_4(self) -> None:
+        """Open link 5."""
+        self._open_link(4)
+
+    def _open_link(self, index: int) -> None:
+        """Open a link with the system default browser."""
+        if 0 <= index < len(self.links):
+            url = self.links[index]
+            try:
+                if platform.system() == "Darwin":  # macOS
+                    subprocess.run(["open", url], check=True)
+                elif platform.system() == "Linux":
+                    subprocess.run(["xdg-open", url], check=True)
+                elif platform.system() == "Windows":
+                    subprocess.run(["start", url], check=True, shell=True)
+                self.app.notify(f"Opened: {url[:50]}...", severity="information")
+            except Exception as e:
+                self.app.notify(f"Failed to open link: {e}", severity="error")
+
     def on_button_pressed(self, event: Button.Pressed) -> None:
         """Handle button presses."""
         if event.button.id == "btn-complete":
             self.post_message(self.Completed(self._task_data))
-        elif event.button.id == "btn-open-links":
-            links = (
-                self._task_data.get('document_links', [])
-                if isinstance(self._task_data, dict)
-                else self._task_data.get_document_links_list()
-            )
-            if links:
-                self.post_message(self.OpenLinks(links))
         elif event.button.id == "btn-delete":
             self.post_message(self.Deleted(self._task_data))
         elif event.button.id == "btn-close":
@@ -202,13 +249,6 @@ class TaskDetailsModal(Static):
         def __init__(self, task: Task | dict):
             super().__init__()
             self.task = task
-
-    class OpenLinks(Message):
-        """Message sent when opening document links."""
-
-        def __init__(self, links: list[str]):
-            super().__init__()
-            self.links = links
 
     class Deleted(Message):
         """Message sent when task is deleted."""
