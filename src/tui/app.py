@@ -124,7 +124,7 @@ class TaskDashboardApp(App):
                         service.update_task(task, status=TaskStatus.COMPLETED)
                         self.notify(f"Completed: {task_title}", severity="information")
                     else:
-                        self.notify(f"Task not found", severity="error")
+                        self.notify("Task not found", severity="error")
                 self._refresh_data()
 
             except Exception as e:
@@ -156,7 +156,7 @@ class TaskDashboardApp(App):
                     service.delete_task(task)
                     self.notify(f"Deleted: {task_title}", severity="information")
                 else:
-                    self.notify(f"Task not found", severity="error")
+                    self.notify("Task not found", severity="error")
             self._refresh_data()
 
         except Exception as e:
@@ -188,7 +188,7 @@ class TaskDashboardApp(App):
         from src.tui.widgets.document_links import DocumentLinksModal
         modal = DocumentLinksModal(links)
         self.mount(modal)
-        self.notify(f"Document Links: Press o+number to open, c+number to copy", severity="information")
+        self.notify("Document Links: Press o+number to open, c+number to copy", severity="information")
 
     def action_poll_now(self) -> None:
         """Trigger an immediate poll."""
