@@ -1,15 +1,14 @@
 """Main TUI application for the Personal Assistant dashboard."""
 
-from datetime import datetime
 from typing import Optional
 
 from textual.app import ComposeResult, App
-from textual.containers import Container, Horizontal
-from textual.widgets import Header, Footer, Static
+from textual.containers import Horizontal
+from textual.widgets import Header, Footer
 
-from src.tui.widgets import TaskTable, InitiativePanel, AgentStatusBar
 from src.models.database import get_db_session
 from src.services.task_service import TaskService
+from src.tui.widgets import TaskTable, InitiativePanel, AgentStatusBar
 
 
 class TaskDashboardApp(App):
