@@ -2282,6 +2282,41 @@ def server(ctx, host, port, reload):
     )
 
 
+# --- TUI Command ---
+
+
+@cli.command()
+def tui():
+    """Start the terminal user interface dashboard.
+
+    Launch an interactive TUI for managing tasks and initiatives with real-time
+    updates and keyboard shortcuts. Perfect for terminal-based workflows.
+
+    Examples:
+
+        pa tui                    # Start the TUI dashboard
+    """
+    try:
+        from src.tui.app import TaskDashboardApp
+
+        app = TaskDashboardApp()
+        app.run()
+
+    except ImportError:
+        console.print(
+            "[red]✗ TUI dependencies not available.[/red]\n"
+            "[yellow]Install Textual:[/yellow]\n"
+            "  pip install textual"
+        )
+        sys.exit(1)
+    except KeyboardInterrupt:
+        console.print("\n[dim]TUI closed.[/dim]")
+        sys.exit(0)
+    except Exception as e:
+        console.print(f"[red]✗ Error: {e}[/red]")
+        sys.exit(1)
+
+
 # --- macOS Menu Bar Command ---
 
 
