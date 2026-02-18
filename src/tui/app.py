@@ -170,7 +170,7 @@ class TaskDashboardApp(App):
         self.notify("Full Task List: Type to search, Esc to close", severity="information")
 
     def action_open_link(self) -> None:
-        """Open or show document links for the selected task."""
+        """Show task details for the selected task."""
         if not self.task_table:
             return
 
@@ -179,16 +179,10 @@ class TaskDashboardApp(App):
             self.notify("No task selected", severity="warning")
             return
 
-        links = task_data.get('document_links', [])
-        if not links:
-            self.notify("Task has no document links", severity="warning")
-            return
-
-        # Show links modal
-        from src.tui.widgets.document_links import DocumentLinksModal
-        modal = DocumentLinksModal(links)
+        # Show task details modal
+        from src.tui.widgets.task_details import TaskDetailsModal
+        modal = TaskDetailsModal(task_data)
         self.mount(modal)
-        self.notify("Document Links: Press 1-5 to open", severity="information")
 
     def action_poll_now(self) -> None:
         """Trigger an immediate poll."""
@@ -217,6 +211,58 @@ class TaskDashboardApp(App):
         except Exception as e:
             self.notify(f"Poll failed: {e}", severity="error")
 
+    def on_task_details_modal_completed(self, message) -> None:
+        """Handle task completed message from details modal."""
+        task_data = message.task
+        task_id = task_data.get('id') if isinstance(task_data, dict) else task_data.id
+        title = task_data.get('title') if isinstance(task_data, dict) else task_data.title
+
+        try:
+            with get_db_session() as db:
+                service = TaskService(db)
+                task = service.get_task(task_id)
+                if task:
+                    from src.models.task import TaskStatus
+                    service.update_task(task, status=TaskStatus.COMPLETED)
+                    self.notify(f"Completed: {title}", severity="information")
+                else:
+                    self.notify("Task not found", severity="error")
+            self._refresh_data()
+        except Exception as e:
+            self.notify(f"Error completing task: {e}", severity="error")
+
+    def on_task_details_modal_deleted(self, message) -> None:
+        """Handle task deleted message from details modal."""
+        task_data = message.task
+        task_id = task_data.get('id') if isinstance(task_data, dict) else task_data.id
+        title = task_data.get('title') if isinstance(task_data, dict) else task_data.title
+
+        try:
+            with get_db_session() as db:
+                service = TaskService(db)
+                task = service.get_task(task_id)
+                if task:
+                    service.delete_task(task)
+                    self.notify(f"Deleted: {title}", severity="information")
+                else:
+                    self.notify("Task not found", severity="error")
+            self._refresh_data()
+        except Exception as e:
+            self.notify(f"Error deleting task: {e}", severity="error")
+
+    def on_task_details_modal_open_links(self, message) -> None:
+        """Handle open links message from details modal."""
+        links = message.links
+        if not links:
+            self.notify("Task has no document links", severity="warning")
+            return
+
+        # Show document links modal
+        from src.tui.widgets.document_links import DocumentLinksModal
+        modal = DocumentLinksModal(links)
+        self.mount(modal)
+        self.notify("Document Links: Press 1-5 to open", severity="information")
+
     def action_toggle_polling(self) -> None:
         """Toggle auto-polling on/off (Phase 3)."""
         if self.agent_status:
@@ -233,11 +279,11 @@ class TaskDashboardApp(App):
           Esc            Close modal
 
         Task Actions:
+          Enter          Show task details
           c              Complete selected task
           d              Delete selected task
-          m              Mark for merge (Phase 2)
           l              Show full task list
-          o              Open document links
+          o              Show task details (same as Enter)
 
         Agent Control:
           p              Poll agent now (Phase 3)
