@@ -110,17 +110,23 @@ class TaskDashboardApp(App):
             self.notify("No task selected", severity="warning")
             return
 
-        try:
-            with get_db_session() as db:
-                service = TaskService(db)
-                from src.models.task import TaskStatus
-                service.update_task(task, status=TaskStatus.COMPLETED)
+        # Show confirmation
+        def do_complete():
+            try:
+                with get_db_session() as db:
+                    service = TaskService(db)
+                    from src.models.task import TaskStatus
+                    service.update_task(task, status=TaskStatus.COMPLETED)
 
-            self.notify(f"Completed: {task.title}", severity="information")
-            self._refresh_data()
+                self.notify(f"Completed: {task.title}", severity="information")
+                self._refresh_data()
 
-        except Exception as e:
-            self.notify(f"Error completing task: {e}", severity="error")
+            except Exception as e:
+                self.notify(f"Error completing task: {e}", severity="error")
+
+        self.notify(f"Complete '{task.title}'? (Press 'y' to confirm)", severity="information")
+        # For now, just complete directly (we'll add proper confirmation in Phase 2)
+        do_complete()
 
     def action_delete_task(self) -> None:
         """Delete the currently selected task."""

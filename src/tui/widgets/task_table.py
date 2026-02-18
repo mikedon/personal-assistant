@@ -6,6 +6,7 @@ from typing import Optional
 from textual.containers import Container
 from textual.reactive import reactive
 from textual.widgets import DataTable, Static
+from textual.binding import Binding
 
 from src.models.database import get_db_session
 from src.models.task import TaskStatus, TaskPriority
@@ -27,6 +28,10 @@ class TaskTable(Static):
         height: 1fr;
     }
     """
+
+    BINDINGS = [
+        Binding("enter", "show_details", "Details"),
+    ]
 
     task_count = reactive(0)
     selected_task_id = reactive(None)
@@ -146,3 +151,15 @@ class TaskTable(Static):
         if task_id:
             return next((t for t in self.tasks if t.id == task_id), None)
         return None
+
+    def action_show_details(self) -> None:
+        """Show details for the selected task."""
+        task = self.get_selected_task()
+        if task:
+            self.post_message(self.TaskSelected(task))
+
+    class TaskSelected:
+        """Message posted when a task is selected to show details."""
+
+        def __init__(self, task):
+            self.task = task
