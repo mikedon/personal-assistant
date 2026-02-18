@@ -44,7 +44,17 @@ class InitiativePanel(Static):
                 initiatives_data = service.get_initiatives_with_progress(
                     include_completed=False
                 )
-                self.initiatives = initiatives_data
+
+                # Eagerly load all data into dicts before session closes
+                self.initiatives = []
+                for item in initiatives_data:
+                    initiative = item['initiative']
+                    progress = item['progress']
+                    self.initiatives.append({
+                        'title': initiative.title,
+                        'priority': initiative.priority,
+                        'progress': progress,
+                    })
 
             self.initiative_count = len(self.initiatives)
             self.update(self._render_initiatives())
@@ -61,20 +71,18 @@ class InitiativePanel(Static):
             return "\n".join(lines)
 
         for item in self.initiatives:
-            initiative = item["initiative"]
-            progress = item["progress"]
-
             # Priority emoji
             pri_emoji = {
                 "high": "🔴",
                 "medium": "🟡",
                 "low": "🟢",
-            }.get(initiative.priority.value, "⚪")
+            }.get(item['priority'].value, "⚪")
 
             # Title
-            title = initiative.title[:20]
+            title = item['title'][:20]
 
             # Progress bar
+            progress = item['progress']
             pct = progress["progress_percent"]
             completed = progress["completed_tasks"]
             total = progress["total_tasks"]

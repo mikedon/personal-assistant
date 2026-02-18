@@ -104,26 +104,32 @@ class TaskDashboardApp(App):
         if not self.task_table:
             return
 
-        task = self.task_table.get_selected_task()
-        if not task:
+        task_data = self.task_table.get_selected_task()
+        if not task_data:
             self.notify("No task selected", severity="warning")
             return
+
+        task_id = task_data['id']
+        task_title = task_data['title']
 
         # Show confirmation
         def do_complete():
             try:
                 with get_db_session() as db:
                     service = TaskService(db)
-                    from src.models.task import TaskStatus
-                    service.update_task(task, status=TaskStatus.COMPLETED)
-
-                self.notify(f"Completed: {task.title}", severity="information")
+                    task = service.get_task(task_id)
+                    if task:
+                        from src.models.task import TaskStatus
+                        service.update_task(task, status=TaskStatus.COMPLETED)
+                        self.notify(f"Completed: {task_title}", severity="information")
+                    else:
+                        self.notify(f"Task not found", severity="error")
                 self._refresh_data()
 
             except Exception as e:
                 self.notify(f"Error completing task: {e}", severity="error")
 
-        self.notify(f"Complete '{task.title}'? (Press 'y' to confirm)", severity="information")
+        self.notify(f"Complete '{task_title}'?", severity="information")
         # For now, just complete directly (we'll add proper confirmation in Phase 2)
         do_complete()
 
@@ -132,18 +138,24 @@ class TaskDashboardApp(App):
         if not self.task_table:
             return
 
-        task = self.task_table.get_selected_task()
-        if not task:
+        task_data = self.task_table.get_selected_task()
+        if not task_data:
             self.notify("No task selected", severity="warning")
             return
+
+        task_id = task_data['id']
+        task_title = task_data['title']
 
         # For now, just do it (in Phase 2 we'll add confirmation modal)
         try:
             with get_db_session() as db:
                 service = TaskService(db)
-                service.delete_task(task)
-
-            self.notify(f"Deleted: {task.title}", severity="information")
+                task = service.get_task(task_id)
+                if task:
+                    service.delete_task(task)
+                    self.notify(f"Deleted: {task_title}", severity="information")
+                else:
+                    self.notify(f"Task not found", severity="error")
             self._refresh_data()
 
         except Exception as e:
@@ -158,12 +170,12 @@ class TaskDashboardApp(App):
         if not self.task_table:
             return
 
-        task = self.task_table.get_selected_task()
-        if not task:
+        task_data = self.task_table.get_selected_task()
+        if not task_data:
             self.notify("No task selected", severity="warning")
             return
 
-        links = task.get_document_links_list()
+        links = task_data.get('document_links', [])
         if not links:
             self.notify("Task has no document links", severity="warning")
             return

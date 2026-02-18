@@ -69,33 +69,49 @@ class TaskTable(Static):
         try:
             with get_db_session() as db:
                 service = TaskService(db)
-                self.tasks = service.get_prioritized_tasks(limit=10)
+                db_tasks = service.get_prioritized_tasks(limit=10)
 
-            self.table.clear()
+                # Eagerly load all data into dicts before session closes
+                self.tasks = []
+                for task in db_tasks:
+                    self.tasks.append({
+                        'id': task.id,
+                        'title': task.title,
+                        'priority': task.priority,
+                        'status': task.status,
+                        'due_date': task.due_date,
+                        'initiative_title': task.initiative.title if task.initiative else None,
+                        'document_links': task.get_document_links_list(),
+                    })
 
-            for task in self.tasks:
+            # Clear rows but keep columns
+            # Get current row indices and delete them
+            while len(self.table.rows) > 0:
+                self.table.remove_row(next(iter(self.table.rows)))
+
+            for task_data in self.tasks:
                 # Priority emoji
                 pri_emoji = {
                     TaskPriority.CRITICAL: "🔴",
                     TaskPriority.HIGH: "🟠",
                     TaskPriority.MEDIUM: "🟡",
                     TaskPriority.LOW: "🟢",
-                }.get(task.priority, "⚪")
+                }.get(task_data['priority'], "⚪")
 
                 # Title (truncate if too long)
-                title = task.title[:30] if task.title else "(no title)"
+                title = task_data['title'][:30] if task_data['title'] else "(no title)"
 
                 # Status
-                status = task.status.value if task.status else "unknown"
+                status = task_data['status'].value if task_data['status'] else "unknown"
 
                 # Due date (relative format)
-                due_str = self._format_due_date(task.due_date) if task.due_date else "-"
+                due_str = self._format_due_date(task_data['due_date']) if task_data['due_date'] else "-"
 
                 # Initiative
-                initiative = task.initiative.title[:15] if task.initiative else "-"
+                initiative = task_data['initiative_title'][:15] if task_data['initiative_title'] else "-"
 
                 # Links count
-                links_count = len(task.get_document_links_list()) if task.document_links else 0
+                links_count = len(task_data['document_links']) if task_data['document_links'] else 0
                 links_str = f"🔗 {links_count}" if links_count > 0 else ""
 
                 # Add row
@@ -106,7 +122,7 @@ class TaskTable(Static):
                     due_str,
                     initiative,
                     links_str,
-                    key=str(task.id),
+                    key=str(task_data['id']),
                 )
 
             self.task_count = len(self.tasks)
@@ -142,14 +158,14 @@ class TaskTable(Static):
     def get_selected_task_id(self) -> Optional[int]:
         """Get the ID of the currently selected task."""
         if self.table.cursor_row >= 0 and self.table.cursor_row < len(self.tasks):
-            return self.tasks[self.table.cursor_row].id
+            return self.tasks[self.table.cursor_row]['id']
         return None
 
     def get_selected_task(self):
-        """Get the currently selected task object."""
+        """Get the currently selected task data dict."""
         task_id = self.get_selected_task_id()
         if task_id:
-            return next((t for t in self.tasks if t.id == task_id), None)
+            return next((t for t in self.tasks if t['id'] == task_id), None)
         return None
 
     def action_show_details(self) -> None:
