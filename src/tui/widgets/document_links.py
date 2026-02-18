@@ -1,13 +1,12 @@
 """Document links modal widget for opening and managing links."""
 
-import subprocess
 import platform
-from typing import Optional
+import subprocess
 
 from textual.app import ComposeResult
-from textual.containers import Vertical
-from textual.widgets import Static, Label
 from textual.binding import Binding
+from textual.containers import Vertical
+from textual.widgets import Label, Static
 
 
 class DocumentLinksModal(Static):
@@ -47,11 +46,15 @@ class DocumentLinksModal(Static):
         Binding("5", "open_link_4", "Open 5"),
     ]
 
-    def __init__(self, links: list[str], name: Optional[str] = None, id: Optional[str] = None):
+    def __init__(self, links: list[str], name: str | None = None, id: str | None = None):
         """Initialize the modal with document links."""
         super().__init__(name=name, id=id)
         self.links = links
 
+    def on_mount(self) -> None:
+        """Set up the modal when mounted."""
+        # Focus the widget so it can receive key events
+        self.focus()
 
     def compose(self) -> ComposeResult:
         """Compose the modal."""
@@ -75,7 +78,9 @@ class DocumentLinksModal(Static):
 
     def action_close(self) -> None:
         """Close the modal."""
-        self.remove()
+        # Use display = False to hide (works better for Static widgets)
+        # Then schedule removal to clean up
+        self.display = False
 
     def action_open_link_0(self) -> None:
         """Open link 1."""
