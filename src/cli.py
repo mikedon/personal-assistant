@@ -28,7 +28,7 @@ from src.models.initiative import InitiativePriority, InitiativeStatus
 from src.models.task import TaskPriority, TaskSource, TaskStatus
 from src.services.initiative_service import InitiativeService
 from src.services.task_service import TaskService
-from src.utils.config import get_config, load_config
+from src.utils.config import get_config, load_config, set_config
 
 console = Console()
 
@@ -97,7 +97,7 @@ def run_async(coro):
 
 @click.group()
 @click.version_option(version=__version__, prog_name="Personal Assistant")
-@click.option("--config", "-c", type=click.Path(exists=True), help="Path to config file")
+@click.option("--config", "-c", type=click.Path(), help="Path to config file")
 @click.pass_context
 def cli(ctx, config):
     """Personal Assistant - AI-powered task management and productivity.
@@ -108,7 +108,12 @@ def cli(ctx, config):
 
     # Load configuration
     config_path = config if config else None
-    ctx.obj["config"] = load_config(config_path)
+    loaded_config = load_config(config_path)
+    ctx.obj["config"] = loaded_config
+    ctx.obj["config_path"] = config_path  # Store the path for subcommands
+    
+    # Set the global singleton so the API uses this config
+    set_config(loaded_config)
 
     # Initialize database
     init_db()
@@ -495,9 +500,10 @@ def accounts():
 
 
 @accounts.command("list")
-def accounts_list():
+@click.pass_context
+def accounts_list(ctx):
     """List all connected Google accounts."""
-    config = get_config()
+    config = ctx.obj["config"]
     google_config = config.google
 
     if not google_config.enabled or not google_config.accounts:
@@ -525,14 +531,15 @@ def accounts_list():
 @accounts.command("authenticate")
 @click.argument("account_type")
 @click.argument("account_id")
-def accounts_authenticate(account_type: str, account_id: str):
+@click.pass_context
+def accounts_authenticate(ctx, account_type: str, account_id: str):
     """Run OAuth flow for a specific account.
 
     Examples:
         pa accounts authenticate google personal
         pa accounts authenticate granola all
     """
-    config = get_config()
+    config = ctx.obj["config"]
 
     if account_type == "google":
         # Find Google account config
@@ -1171,7 +1178,8 @@ def tasks_stats():
 @click.argument("date", required=False)
 @click.option("--yes", "-y", is_flag=True, help="Skip confirmation prompt")
 @click.option("--clear", "-c", is_flag=True, help="Clear the due date")
-def tasks_due(task_id, date, yes, clear):
+@click.pass_context
+def tasks_due(ctx, task_id, date, yes, clear):
     """Update a task's due date.
 
     Supports natural language dates like "tomorrow", "next Friday",
@@ -1215,7 +1223,7 @@ def tasks_due(task_id, date, yes, clear):
 
             # If simple parsing fails, try LLM
             if new_due_date is None:
-                config = get_config()
+                config = ctx.obj["config"]
 
                 if not config.llm.api_key:
                     console.print(f"[red]Could not parse date: {date}[/red]")
@@ -1267,7 +1275,8 @@ def tasks_due(task_id, date, yes, clear):
 @click.argument("task_ids", type=int, nargs=-1, required=True)
 @click.option("--yes", "-y", is_flag=True, help="Skip confirmation prompt")
 @click.option("--keep", "-k", is_flag=True, help="Keep original tasks instead of deleting them")
-def tasks_merge(task_ids, yes, keep):
+@click.pass_context
+def tasks_merge(ctx, task_ids, yes, keep):
     """Merge multiple tasks into a single task.
 
     Combines tasks using AI to create a unified title, takes the highest
@@ -1288,7 +1297,7 @@ def tasks_merge(task_ids, yes, keep):
         console.print("[red]Please provide at least 2 task IDs to merge.[/red]")
         return
 
-    config = get_config()
+    config = ctx.obj["config"]
 
     # Check if LLM is configured
     if not config.llm.api_key:
@@ -1397,7 +1406,8 @@ def tasks_merge(task_ids, yes, keep):
 @tasks.command("voice")
 @click.option("--duration", "-d", default=10, type=int, help="Recording duration in seconds (1-60)")
 @click.option("--transcribe-only", "-t", is_flag=True, help="Only transcribe, don't create a task")
-def tasks_voice(duration, transcribe_only):
+@click.pass_context
+def tasks_voice(ctx, duration, transcribe_only):
     """Create a task from voice input.
 
     Records audio from your microphone, transcribes it using Whisper,
@@ -1410,7 +1420,7 @@ def tasks_voice(duration, transcribe_only):
         VoiceService,
     )
 
-    config = get_config()
+    config = ctx.obj["config"]
 
     # Check if voice is enabled
     if not config.voice.enabled:
@@ -1584,7 +1594,8 @@ def tasks_associate(task_id, initiative_id):
 @click.argument("text")
 @click.option("--dry-run", "-n", is_flag=True, help="Show what would be created without creating")
 @click.option("--yes", "-y", is_flag=True, help="Skip confirmation prompt")
-def tasks_parse(text, dry_run, yes):
+@click.pass_context
+def tasks_parse(ctx, text, dry_run, yes):
     """Create a task from natural language text.
 
     Uses AI to parse the text and extract task details including
@@ -1600,7 +1611,7 @@ def tasks_parse(text, dry_run, yes):
     """
     from src.services.llm_service import LLMService, LLMError
 
-    config = get_config()
+    config = ctx.obj["config"]
 
     # Check if LLM is configured
     if not config.llm.api_key:
@@ -2250,7 +2261,8 @@ slack:
 @click.option("--host", default="127.0.0.1", help="Host to bind to")
 @click.option("--port", "-p", default=8000, help="Port to bind to")
 @click.option("--reload", is_flag=True, help="Enable auto-reload (dev mode)")
-def server(host, port, reload):
+@click.pass_context
+def server(ctx, host, port, reload):
     """Start the API server."""
     import uvicorn
 
@@ -2260,6 +2272,8 @@ def server(host, port, reload):
         title="Personal Assistant API",
     ))
 
+    # Note: The config from ctx.obj["config"] is already loaded into the global
+    # singleton via get_config() in the cli() function, so the API will use it.
     uvicorn.run(
         "src.api.main:app",
         host=host,
@@ -2280,7 +2294,8 @@ def server(host, port, reload):
               help="Don't start the API server automatically")
 @click.option("--refresh-interval", "-r", default=300, type=int,
               help="How often to refresh task data in seconds (default: 300)")
-def macos_menu(api_url, start_api, no_start_api, refresh_interval):
+@click.pass_context
+def macos_menu(ctx, api_url, start_api, no_start_api, refresh_interval):
     """Start the macOS menu bar task counter (macOS only).
 
     Displays a menu bar icon showing the count of tasks due today or overdue,
@@ -2315,10 +2330,14 @@ def macos_menu(api_url, start_api, no_start_api, refresh_interval):
 
     # Launch the menu bar app
     try:
+        # Get config path from CLI context (if provided with -c option)
+        config_path = ctx.obj.get("config_path")
+        
         launch(
             api_url=api_url,
             start_api=(not no_start_api) and start_api,
             refresh_interval=refresh_interval,
+            config_path=config_path,
         )
     except KeyboardInterrupt:
         console.print("\n[dim]Stopped.[/dim]")
@@ -2334,11 +2353,12 @@ def macos_menu(api_url, start_api, no_start_api, refresh_interval):
 @cli.command()
 @click.argument("message")
 @click.option("--title", "-t", default="Personal Assistant", help="Notification title")
-def notify(message, title):
+@click.pass_context
+def notify(ctx, message, title):
     """Send a test notification."""
     from src.services.notification_service import NotificationService, Notification, NotificationType
 
-    config = get_config()
+    config = ctx.obj["config"]
     service = NotificationService(config.notifications)
 
     notification = Notification(

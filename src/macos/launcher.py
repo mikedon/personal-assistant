@@ -6,11 +6,24 @@ Handles:
 - Managing process lifecycle
 """
 
+import logging
 import subprocess
 import sys
 import time
 
 import httpx
+
+# Configure logging for debugging
+logging.basicConfig(
+    level=logging.DEBUG,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.StreamHandler(sys.stderr),
+        logging.FileHandler('/tmp/personal_assistant_debug.log')
+    ]
+)
+
+logger = logging.getLogger(__name__)
 
 
 def check_api_running(api_url: str = "http://localhost:8000", timeout: float = 2.0) -> bool:
@@ -30,12 +43,13 @@ def check_api_running(api_url: str = "http://localhost:8000", timeout: float = 2
         return False
 
 
-def start_api_server(port: int = 8000, reload: bool = False) -> subprocess.Popen:
+def start_api_server(port: int = 8000, reload: bool = False, config_path=None) -> subprocess.Popen:
     """Start the API server.
 
     Args:
         port: Port to run the server on
         reload: Enable auto-reload on file changes
+        config_path: Path to config file to pass to the API server
 
     Returns:
         Subprocess handle
@@ -43,12 +57,15 @@ def start_api_server(port: int = 8000, reload: bool = False) -> subprocess.Popen
     Raises:
         RuntimeError: If server cannot be started
     """
-    cmd = [sys.executable, "-m", "uvicorn", "src.api.main:app"]
+    # Use the CLI's server command instead of uvicorn directly
+    # This allows us to pass the -c config option
+    if config_path:
+        cmd = [sys.executable, "-m", "src.cli", "-c", config_path, "server", "--port", str(port)]
+    else:
+        cmd = [sys.executable, "-m", "src.cli", "server", "--port", str(port)]
 
     if reload:
         cmd.append("--reload")
-
-    cmd.extend(["--host", "localhost", "--port", str(port)])
 
     try:
         process = subprocess.Popen(
@@ -113,6 +130,7 @@ def launch(
     api_url: str = "http://localhost:8000",
     start_api: bool = True,
     refresh_interval: int = 300,
+    config_path=None,
 ) -> None:
     """Launch the Personal Assistant with menu bar integration.
 
@@ -120,6 +138,7 @@ def launch(
         api_url: Base URL of the personal assistant API
         start_api: Whether to start the API server if not running
         refresh_interval: How often to refresh task data (seconds)
+        config_path: Path to config file to use for the API server
     """
     import signal
 
@@ -133,7 +152,7 @@ def launch(
         print(f"✓ API server is already running at {api_url}")
     elif start_api:
         print(f"Starting API server on {api_url}...")
-        api_process = start_api_server()
+        api_process = start_api_server(config_path=config_path)
 
         if not wait_for_api(api_url):
             print("✗ Failed to start API server")

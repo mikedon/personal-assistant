@@ -195,6 +195,30 @@ pa summary
 pa agent start --foreground
 ```
 
+#### Development: Running API + macOS Menu Bar Together
+
+For macOS development, run both the API server and menu bar app with one command:
+
+```bash
+# Run from project root
+./run-dev.sh
+```
+
+This script:
+- Starts the API server on `http://localhost:8000`
+- Waits for the API to be ready (health check)
+- Starts the macOS menu bar application
+- Cleans up both processes on exit (Ctrl+C)
+
+Alternatively, run them separately:
+```bash
+# Terminal 1: Start the API server
+pa server --reload
+
+# Terminal 2: Start the menu bar app
+pa macos-menu
+```
+
 #### Agent Commands
 ```bash
 pa agent start [--autonomy LEVEL] [--foreground]  # Start the agent
