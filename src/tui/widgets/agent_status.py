@@ -49,16 +49,18 @@ class AgentStatusBar(Static):
             self.log(f"Error refreshing agent status: {e}")
 
     def _render_status(self) -> str:
-        """Render the agent status."""
+        """Render the agent status with real-time relative timestamps."""
         status_indicator = "[green]●[/green]" if self.agent_running else "[red]●[/red]"
         status_text = "Running" if self.agent_running else "Stopped"
 
+        # First line: status and polling state
         lines = [
-            f"[bold]Agent Status[/bold] {status_indicator} {status_text}  "
+            f"[bold]Agent[/bold] {status_indicator} {status_text}  "
             f"Autonomy: [cyan]{self.autonomy_level}[/cyan]  "
-            f"Auto-polling: {'[green]ON[/green]' if self.auto_polling else '[red]OFF[/red]'}"
+            f"Auto: {'[green]ON[/green]' if self.auto_polling else '[red]OFF[/red]'}"
         ]
 
+        # Second line: poll timing and stats
         if self.last_poll_time:
             elapsed = datetime.now() - self.last_poll_time
             if elapsed.total_seconds() < 60:
@@ -70,11 +72,12 @@ class AgentStatusBar(Static):
                 hours = int(elapsed.total_seconds() / 3600)
                 time_str = f"{hours}h ago"
 
-            lines.append(f"Last poll: {time_str}  Polls this session: {self.poll_count}")
+            lines.append(f"Last poll: {time_str}  |  {self.poll_count} polls this session")
         else:
-            lines.append("Last poll: never  Polls this session: 0")
+            lines.append("Last poll: never  |  0 polls this session")
 
-        lines.append("[dim]Press 'p' to poll now • 'a' to toggle auto-polling • '?' for help[/dim]")
+        # Third line: shortcuts
+        lines.append("[dim]p:poll • a:auto • ?:help[/dim]")
 
         return "\n".join(lines)
 
