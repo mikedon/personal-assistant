@@ -47,7 +47,7 @@ class TaskDashboardApp(App):
         ("c", "complete_task", "Complete"),
         ("d", "delete_task", "Delete"),
         ("l", "show_task_list", "List All"),
-        ("o", "open_link", "Open Link"),
+        ("o", "open_link", "Open Task"),
         ("p", "poll_now", "Poll Now"),
         ("a", "toggle_polling", "Auto Poll"),
         ("?", "show_help", "Help"),

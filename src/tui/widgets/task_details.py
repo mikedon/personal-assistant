@@ -16,6 +16,10 @@ class TaskDetailsModal(Static):
     """Modal displaying full task details."""
 
     DEFAULT_CSS = """
+    Screen {
+        align: center middle;
+    }
+
     TaskDetailsModal {
         width: 90;
         height: auto;
@@ -23,7 +27,6 @@ class TaskDetailsModal(Static):
         padding: 1;
         background: $panel;
         layer: overlay;
-        align: center middle;
     }
 
     TaskDetailsModal > Vertical {
@@ -199,7 +202,7 @@ class TaskDetailsModal(Static):
 
     def action_close(self) -> None:
         """Close the modal."""
-        self.display = False
+        self.remove()
 
     def action_open_link_0(self) -> None:
         """Open link 1."""
