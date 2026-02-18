@@ -188,8 +188,7 @@ class TaskDashboardApp(App):
         from src.tui.widgets.document_links import DocumentLinksModal
         modal = DocumentLinksModal(links)
         self.mount(modal)
-        msg = "Document Links: Press o+number to open, c+number to copy"
-        self.notify(msg, severity="information")
+        self.notify("Document Links: Press 1-5 to open", severity="information")
 
     def action_poll_now(self) -> None:
         """Trigger an immediate poll."""

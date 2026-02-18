@@ -40,12 +40,18 @@ class DocumentLinksModal(Static):
 
     BINDINGS = [
         Binding("escape", "close", "Close"),
+        Binding("1", "open_link_0", "Open 1"),
+        Binding("2", "open_link_1", "Open 2"),
+        Binding("3", "open_link_2", "Open 3"),
+        Binding("4", "open_link_3", "Open 4"),
+        Binding("5", "open_link_4", "Open 5"),
     ]
 
     def __init__(self, links: list[str], name: Optional[str] = None, id: Optional[str] = None):
         """Initialize the modal with document links."""
         super().__init__(name=name, id=id)
         self.links = links
+
 
     def compose(self) -> ComposeResult:
         """Compose the modal."""
@@ -62,17 +68,37 @@ class DocumentLinksModal(Static):
 
                 yield Label("")
                 help_text = (
-                    "[dim]Keyboard:[/dim] [cyan]o+number[/cyan] to open, "
-                    "[cyan]c+number[/cyan] to copy, [cyan]esc[/cyan] to close"
+                    "[dim]Press [yellow]1-5[/yellow] to open link, "
+                    "[yellow]esc[/yellow] to close[/dim]"
                 )
                 yield Label(help_text)
 
     def action_close(self) -> None:
         """Close the modal."""
-        self.display = False
+        self.remove()
+
+    def action_open_link_0(self) -> None:
+        """Open link 1."""
+        self.open_link(0)
+
+    def action_open_link_1(self) -> None:
+        """Open link 2."""
+        self.open_link(1)
+
+    def action_open_link_2(self) -> None:
+        """Open link 3."""
+        self.open_link(2)
+
+    def action_open_link_3(self) -> None:
+        """Open link 4."""
+        self.open_link(3)
+
+    def action_open_link_4(self) -> None:
+        """Open link 5."""
+        self.open_link(4)
 
     def open_link(self, index: int) -> None:
-        """Open a link with system default."""
+        """Open a link with system default (helper method)."""
         if 0 <= index < len(self.links):
             url = self.links[index]
             try:
@@ -87,7 +113,7 @@ class DocumentLinksModal(Static):
                 self.app.notify(f"Failed to open link: {e}", severity="error")
 
     def copy_link(self, index: int) -> None:
-        """Copy a link to clipboard."""
+        """Copy a link to clipboard (helper method)."""
         if 0 <= index < len(self.links):
             url = self.links[index]
             try:
