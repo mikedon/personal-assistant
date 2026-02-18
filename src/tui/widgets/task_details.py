@@ -1,8 +1,9 @@
 """Task details modal widget."""
 
 from textual.app import ComposeResult
-from textual.containers import Horizontal, Vertical
 from textual.binding import Binding
+from textual.containers import Horizontal, Vertical
+from textual.message import Message
 from textual.widgets import Button, Label, Static
 
 from src.models.task import Task, TaskPriority
@@ -195,20 +196,23 @@ class TaskDetailsModal(Static):
         elif event.button.id == "btn-close":
             self.action_close()
 
-    class Completed:
+    class Completed(Message):
         """Message sent when task is completed."""
 
         def __init__(self, task: Task | dict):
+            super().__init__()
             self.task = task
 
-    class OpenLinks:
+    class OpenLinks(Message):
         """Message sent when opening document links."""
 
         def __init__(self, links: list[str]):
+            super().__init__()
             self.links = links
 
-    class Deleted:
+    class Deleted(Message):
         """Message sent when task is deleted."""
 
         def __init__(self, task: Task | dict):
+            super().__init__()
             self.task = task
