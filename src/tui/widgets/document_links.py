@@ -6,7 +6,7 @@ from typing import Optional
 
 from textual.app import ComposeResult
 from textual.containers import Vertical
-from textual.widgets import Static, Button, Label
+from textual.widgets import Static, Label
 from textual.binding import Binding
 
 
@@ -61,7 +61,11 @@ class DocumentLinksModal(Static):
                     yield Label(f"[cyan]{i}.[/cyan] {display_url}")
 
                 yield Label("")
-                yield Label("[dim]Keyboard:[/dim] [cyan]o+number[/cyan] to open, [cyan]c+number[/cyan] to copy, [cyan]esc[/cyan] to close")
+                help_text = (
+                    "[dim]Keyboard:[/dim] [cyan]o+number[/cyan] to open, "
+                    "[cyan]c+number[/cyan] to copy, [cyan]esc[/cyan] to close"
+                )
+                yield Label(help_text)
 
     def action_close(self) -> None:
         """Close the modal."""

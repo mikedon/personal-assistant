@@ -1,6 +1,6 @@
 """Agent status bar widget showing agent polling status and controls."""
 
-from datetime import datetime, timedelta
+from datetime import datetime
 from typing import Optional
 
 from textual.reactive import reactive

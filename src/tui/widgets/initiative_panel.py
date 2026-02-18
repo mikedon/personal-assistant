@@ -5,10 +5,8 @@ from typing import Optional
 from textual.reactive import reactive
 from textual.widgets import Static
 from rich.console import Console
-from rich.text import Text
 
 from src.models.database import get_db_session
-from src.models.initiative import InitiativePriority
 from src.services.initiative_service import InitiativeService
 
 

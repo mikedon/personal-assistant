@@ -3,13 +3,12 @@
 from datetime import datetime
 from typing import Optional
 
-from textual.containers import Container
 from textual.reactive import reactive
 from textual.widgets import DataTable, Static
 from textual.binding import Binding
 
 from src.models.database import get_db_session
-from src.models.task import TaskStatus, TaskPriority
+from src.models.task import TaskPriority
 from src.services.task_service import TaskService
 
 
@@ -101,10 +100,16 @@ class TaskTable(Static):
                 task_display = f"{pri_emoji} {title}"
 
                 # Due date (relative format)
-                due_str = self._format_due_date(task_data['due_date']) if task_data['due_date'] else "-"
+                due_str = (
+                    self._format_due_date(task_data['due_date'])
+                    if task_data['due_date'] else "-"
+                )
 
                 # Initiative
-                initiative = task_data['initiative_title'][:12] if task_data['initiative_title'] else "-"
+                initiative = (
+                    task_data['initiative_title'][:12]
+                    if task_data['initiative_title'] else "-"
+                )
 
                 # Links count
                 links_count = len(task_data['document_links']) if task_data['document_links'] else 0

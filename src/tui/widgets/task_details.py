@@ -3,7 +3,7 @@
 from typing import Optional
 
 from textual.app import ComposeResult
-from textual.containers import Vertical, Horizontal, Container
+from textual.containers import Vertical, Horizontal
 from textual.widgets import Static, Button, Label
 from textual.binding import Binding
 
@@ -82,7 +82,8 @@ class TaskDetailsModal(Static):
 
             # Due date
             if self.task.due_date:
-                yield Label(f"Due: {self.task.due_date.strftime('%Y-%m-%d')}", classes="info-section")
+                due_str = self.task.due_date.strftime('%Y-%m-%d')
+                yield Label(f"Due: {due_str}", classes="info-section")
 
             # Initiative
             if self.task.initiative:
@@ -104,7 +105,8 @@ class TaskDetailsModal(Static):
             if links:
                 yield Label("[bold dim]Document Links[/bold dim]")
                 for link in links:
-                    yield Label(f"  • {link[:60]}...", classes="info-section" if len(link) > 60 else "info-section")
+                    link_display = f"  • {link[:60]}..." if len(link) > 60 else f"  • {link}"
+                    yield Label(link_display, classes="info-section")
 
             # Buttons
             with Horizontal(classes="buttons"):

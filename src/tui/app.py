@@ -188,7 +188,8 @@ class TaskDashboardApp(App):
         from src.tui.widgets.document_links import DocumentLinksModal
         modal = DocumentLinksModal(links)
         self.mount(modal)
-        self.notify("Document Links: Press o+number to open, c+number to copy", severity="information")
+        msg = "Document Links: Press o+number to open, c+number to copy"
+        self.notify(msg, severity="information")
 
     def action_poll_now(self) -> None:
         """Trigger an immediate poll."""
@@ -197,23 +198,23 @@ class TaskDashboardApp(App):
             import asyncio
 
             self.notify("Polling integrations...", severity="information")
-            
+
             agent = get_agent()
             # Run poll asynchronously
             results = asyncio.run(agent.poll_now())
-            
+
             if results:
                 total_items = sum(len(r.items_found) for r in results)
                 total_created = sum(len(r.tasks_created) for r in results)
-                self.notify(f"Poll complete: {total_items} items, {total_created} tasks created", severity="information")
+                msg = f"Poll complete: {total_items} items, {total_created} tasks created"
+                self.notify(msg, severity="information")
             else:
                 self.notify("No integrations configured", severity="warning")
-            
+
             # Update agent status and refresh data
             if self.agent_status:
                 self.agent_status.set_last_poll_time(datetime.now())
             self._refresh_data()
-            
         except Exception as e:
             self.notify(f"Poll failed: {e}", severity="error")
 
