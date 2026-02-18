@@ -78,7 +78,7 @@ class TaskListModal(Static):
         self.load_tasks()
 
         # Focus the search input
-        search = self.query_one(Input, "#search-input")
+        search = self.query_one("#search-input", Input)
         search.focus()
 
     def load_tasks(self) -> None:
@@ -157,7 +157,7 @@ class TaskListModal(Static):
 
     def action_search_focus(self) -> None:
         """Focus the search input."""
-        search = self.query_one(Input, "#search-input")
+        search = self.query_one("#search-input", Input)
         search.focus()
 
     def on_input_changed(self, event: Input.Changed) -> None:
