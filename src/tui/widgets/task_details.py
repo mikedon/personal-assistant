@@ -17,11 +17,13 @@ class TaskDetailsModal(Static):
 
     DEFAULT_CSS = """
     TaskDetailsModal {
-        width: 80;
+        width: 90;
         height: auto;
         border: solid $accent;
         padding: 1;
         background: $panel;
+        layer: overlay;
+        align: center middle;
     }
 
     TaskDetailsModal > Vertical {
