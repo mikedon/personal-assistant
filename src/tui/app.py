@@ -163,8 +163,11 @@ class TaskDashboardApp(App):
             self.notify(f"Error deleting task: {e}", severity="error")
 
     def action_show_task_list(self) -> None:
-        """Show the full task list (Phase 2)."""
-        self.notify("Full task list modal coming in Phase 2", severity="information")
+        """Show the full task list with search and filtering."""
+        from src.tui.widgets.task_list_modal import TaskListModal
+        modal = TaskListModal()
+        self.mount(modal)
+        self.notify("Full Task List: Type to search, Esc to close", severity="information")
 
     def action_open_link(self) -> None:
         """Open or show document links for the selected task."""
