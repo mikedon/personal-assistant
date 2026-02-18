@@ -48,11 +48,9 @@ class TaskTable(Static):
 
     def on_mount(self) -> None:
         """Set up the table when mounted."""
-        # Add columns
+        # Add columns - merged priority/title, removed status
         self.table.add_columns(
-            "Pri",
-            "Title",
-            "Status",
+            "Task",
             "Due",
             "Initiative",
             "Links",
@@ -90,7 +88,7 @@ class TaskTable(Static):
                 self.table.remove_row(next(iter(self.table.rows)))
 
             for task_data in self.tasks:
-                # Priority emoji
+                # Priority emoji and title merged
                 pri_emoji = {
                     TaskPriority.CRITICAL: "🔴",
                     TaskPriority.HIGH: "🟠",
@@ -98,27 +96,23 @@ class TaskTable(Static):
                     TaskPriority.LOW: "🟢",
                 }.get(task_data['priority'], "⚪")
 
-                # Title (truncate if too long)
-                title = task_data['title'][:30] if task_data['title'] else "(no title)"
-
-                # Status
-                status = task_data['status'].value if task_data['status'] else "unknown"
+                # Title (wider now, up to 50 chars)
+                title = task_data['title'][:50] if task_data['title'] else "(no title)"
+                task_display = f"{pri_emoji} {title}"
 
                 # Due date (relative format)
                 due_str = self._format_due_date(task_data['due_date']) if task_data['due_date'] else "-"
 
                 # Initiative
-                initiative = task_data['initiative_title'][:15] if task_data['initiative_title'] else "-"
+                initiative = task_data['initiative_title'][:12] if task_data['initiative_title'] else "-"
 
                 # Links count
                 links_count = len(task_data['document_links']) if task_data['document_links'] else 0
-                links_str = f"🔗 {links_count}" if links_count > 0 else ""
+                links_str = f"🔗{links_count}" if links_count > 0 else ""
 
-                # Add row
+                # Add row with merged task column
                 self.table.add_row(
-                    pri_emoji,
-                    title,
-                    status,
+                    task_display,
                     due_str,
                     initiative,
                     links_str,
